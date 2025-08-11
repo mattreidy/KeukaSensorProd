@@ -1,0 +1,23 @@
+[Unit]
+Description=Keuka Water Temp & Level Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/keuka-sensor
+Environment=KS_ADMIN_USER=admin
+Environment=KS_ADMIN_PASS=password
+Environment=KS_STA_IFACE=wlan1
+Environment=KS_AP_IFACE=wlan0
+ExecStart=/opt/keuka-sensor/venv/bin/python /opt/keuka-sensor/keuka_sensor.py
+Restart=always
+RestartSec=3
+# Allow binding to port 80 without root:
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
