@@ -2,10 +2,12 @@
 flask==2.3.3; python_version < "3.10"
 flask==3.1.1; python_version >= "3.10"
 
-opencv-python
+# OpenCV: Pi gets prebuilt wheel, others get latest
+opencv-python==4.6.0.66; platform_machine == "armv6l" or platform_machine == "armv7l" or platform_machine == "aarch64"
+opencv-python==4.12.0.88; platform_machine != "armv6l" and platform_machine != "armv7l" and platform_machine != "aarch64"
 
-w1thermsensor
-
-# NumPy: Py3.9 gets the last supported release, others get latest
+# NumPy: Py3.9 gets last supported release, others get latest
 numpy==1.26.4; python_version < "3.10"
 numpy==2.2.6; python_version >= "3.10"
+
+w1thermsensor

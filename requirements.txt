@@ -31,8 +31,12 @@ markupsafe==3.0.2; python_version >= "3.10"
 numpy==1.26.4; python_version < "3.10"
 numpy==2.2.6; python_version >= "3.10"
 
-opencv-python==4.12.0.88
-    # via -r requirements.in
+# Pi-friendly OpenCV prebuilt wheel
+opencv-python==4.6.0.66; platform_machine == "armv6l" or platform_machine == "armv7l" or platform_machine == "aarch64"
+
+# Newer version for non-Pi environments
+opencv-python==4.12.0.88; platform_machine != "armv6l" and platform_machine != "armv7l" and platform_machine != "aarch64"
+
 w1thermsensor==2.3.0
     # via -r requirements.in
 
