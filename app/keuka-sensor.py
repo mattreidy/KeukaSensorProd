@@ -644,9 +644,7 @@ def duckdns_disable():
     return redirect(url_for('duckdns_page'))
 
 # ---------------- Main ----------------
-if __name__=='main__':  # corrected below; keeping a fallback message just in case
-    print("Run as a module or execute directly.")
-if __name__=='__main__':
+if __name__ == '__main__':
     # Try port 80 (production). If lacking privileges, fall back to 5000 (dev/test).
     try:
         app.run(host='0.0.0.0', port=80, debug=False, threaded=True)
