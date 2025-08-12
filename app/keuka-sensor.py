@@ -4,6 +4,7 @@ import sys
 import time
 import json
 import re
+from typing import Optional
 import ipaddress
 import threading
 import subprocess
@@ -11,11 +12,18 @@ from datetime import datetime
 from pathlib import Path
 from flask import Flask, Response, request, abort, redirect, url_for, make_response
 
-# Camera: OpenCV (optional)
+# --- Ensure NumPy is loaded before cv2 on some Pi builds ---
+try:
+    import numpy as _np  # noqa: F401
+except Exception:
+    _np = None
+
+# Camera: OpenCV (optional, headless OK)
 try:
     import cv2  # type: ignore
-except Exception:
+except Exception as _e:
     cv2 = None
+    print(f"OpenCV not available: {_e}", file=sys.stderr)
 
 # GPIO (allow import on dev machines)
 try:
@@ -60,7 +68,7 @@ DHCPCD_MARK_END   = "# KS-STATIC-END"
 DUCKDNS_CONF = APP_DIR / "duckdns.conf"           # token=... , domains=example1,example2
 DUCKDNS_LAST = APP_DIR / "duckdns_last.txt"
 
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 
 # ---------------- Flask -----------------
 app = Flask(__name__)
@@ -90,7 +98,7 @@ def write_text_atomic(path: Path, content: str, sudo_mv: bool = False) -> bool:
     tmp = Path("/tmp") / (path.name + ".new")
     tmp.write_text(content, encoding="utf-8")
     if sudo_mv:
-        code, out = sh(["sudo", "/bin/mv", str(tmp), str(path)])
+        code, _ = sh(["sudo", "/bin/mv", str(tmp), str(path)])
         return code == 0
     else:
         tmp.replace(path)
@@ -270,20 +278,19 @@ def wifi_connect(ssid:str, psk:str)->bool:
     return True
 
 # ---------------- IPv4 info & config (DHCP/Static on wlan1) ----------------
-def ip_addr4(iface:str)->str|None:
+def ip_addr4(iface: str) -> Optional[str]:
     code,out=sh(["ip","-4","-o","addr","show","dev",iface])
     if code!=0: return None
-    # format: "2: wlan1    inet 192.168.1.23/24 brd ... "
     m=re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+/\d+)", out)
     return m.group(1) if m else None
 
-def gw4(iface:str)->str|None:
+def gw4(iface: str) -> Optional[str]:
     code,out=sh(["ip","route","show","default","dev",iface])
     if code!=0: return None
     m=re.search(r"default via\s+(\d+\.\d+\.\d+\.\d+)", out)
     return m.group(1) if m else None
 
-def dns_servers()->list[str]:
+def dns_servers() -> list[str]:
     txt=read_text(Path("/etc/resolv.conf"))
     return re.findall(r"nameserver\s+(\d+\.\d+\.\d+\.\d+)", txt)
 
@@ -307,7 +314,7 @@ def dhcpcd_current_mode()->dict:
         "dns": (dns.group(1).split() if dns else [])
     }
 
-def dhcpcd_render(mode:str, ip_cidr:str="", router:str="", dns_list:list[str]|None=None)->str:
+def dhcpcd_render(mode:str, ip_cidr:str="", router:str="", dns_list: Optional[list[str]] = None)->str:
     base = read_text(DHCPCD_CONF)
     # Remove any previous KS block
     base2 = re.sub(rf"{re.escape(DHCPCD_MARK_BEGIN)}.*?{re.escape(DHCPCD_MARK_END)}\n?", "", base, flags=re.S)
@@ -576,7 +583,6 @@ def duckdns_read()->dict:
 def duckdns_write(token:str, domains:str)->None:
     txt = f"token={token.strip()}\n" + f"domains={domains.strip()}\n"
     DUCKDNS_CONF.write_text(txt, encoding="utf-8")
-    # lock down perms
     sh(["sudo","/bin/chmod","600", str(DUCKDNS_CONF)])
 
 @app.route('/admin/duckdns', methods=['GET'])
@@ -619,7 +625,6 @@ def duckdns_save():
 def duckdns_update_now():
     if not basic_auth_ok(request):
         return Response('Auth required',401,{"WWW-Authenticate":'Basic realm="KeukaSensor"'})
-    # trigger immediate one-shot update
     sh(["sudo","/usr/bin/systemctl","start","duckdns-update.service"])
     time.sleep(0.5)
     return redirect(url_for('duckdns_page'))
@@ -639,5 +644,15 @@ def duckdns_disable():
     return redirect(url_for('duckdns_page'))
 
 # ---------------- Main ----------------
+if __name__=='main__':  # corrected below; keeping a fallback message just in case
+    print("Run as a module or execute directly.")
 if __name__=='__main__':
-    app.run(host='0.0.0.0', port=80, debug=False, threaded=True)
+    # Try port 80 (production). If lacking privileges, fall back to 5000 (dev/test).
+    try:
+        app.run(host='0.0.0.0', port=80, debug=False, threaded=True)
+    except OSError as e:
+        if getattr(e, 'errno', None) in (13,):  # Permission denied
+            print("Port 80 requires root or CAP_NET_BIND_SERVICE. Falling back to :5000", file=sys.stderr)
+            app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+        else:
+            raise
