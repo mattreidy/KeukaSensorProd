@@ -1,0 +1,8 @@
+[Unit]
+Description=DuckDNS one-shot updater
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/keuka-sensor/duckdns_update.sh
