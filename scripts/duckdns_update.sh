@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONF="/opt/keuka-sensor/duckdns.conf"
-LOG="/opt/keuka-sensor/duckdns_last.txt"
+# Config file created by the web UI (token/domains) or edit manually
+CONF="/home/pi/KeukaSensorProd/duckdns.conf"
+LOG="/home/pi/KeukaSensorProd/duckdns_last.txt"
 
 if [[ ! -f "$CONF" ]]; then
   echo "$(date -Is) no conf" >> "$LOG"
@@ -17,7 +18,8 @@ if [[ -z "${token:-}" || -z "${domains:-}" ]]; then
   exit 0
 fi
 
-# Empty ip= means "use my current public IP"
 OUT="$(curl -s "https://www.duckdns.org/update?domains=${domains}&token=${token}&ip=" || true)"
 echo "$(date -Is) ${OUT}" >> "$LOG"
+
+# Keep log to last 200 lines
 tail -n 200 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"

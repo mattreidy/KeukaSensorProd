@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")"
 
-# If this directory is a git repo, pull latest from origin/main
+cd /home/pi/KeukaSensorProd
+
+# Update code (assumes this dir is a git clone)
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "[update] Pulling latest from origin/main..."
+  echo "[update] Fetching latest…"
   git fetch --all
   git reset --hard origin/main
 else
-  echo "[update] Not a git repo; place new files here manually or init a repo."
+  echo "[update] Not a git repo; put new files here manually."
 fi
 
-# Restart service if running under systemd
-if systemctl is-active --quiet keuka-sensor.service; then
-  echo "[update] Restarting keuka-sensor.service"
-  sudo systemctl restart keuka-sensor.service
+# Install pinned deps
+if [[ -x "venv/bin/pip" ]]; then
+  echo "[update] Installing requirements…"
+  /home/pi/KeukaSensorProd/venv/bin/pip install -r /home/pi/KeukaSensorProd/requirements.txt
 fi
 
+# Restart app
+echo "[update] Restarting keuka-sensor.service…"
+sudo systemctl restart keuka-sensor.service
 echo "[update] Done."

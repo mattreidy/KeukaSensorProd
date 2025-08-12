@@ -1,10 +1,12 @@
 [Unit]
-Description=Simple Wi-Fi Watchdog
+Description=Keuka Wi-Fi Watchdog
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash /opt/keuka-sensor/wifi-watchdog.sh
+User=pi
+ExecStart=/bin/bash /home/pi/KeukaSensorProd/scripts/wifi-watchdog.sh
 Restart=always
 RestartSec=60
 
