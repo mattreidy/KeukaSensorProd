@@ -8,7 +8,7 @@
 
 import time
 from flask import Blueprint, Response, abort
-from camera_mod import camera, cv2  # cv2 may be None; routes handle that
+from camera import camera, cv2  # cv2 may be None; routes handle that
 from ui import render_page
 
 webcam_bp = Blueprint("webcam", __name__)

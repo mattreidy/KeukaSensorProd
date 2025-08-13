@@ -27,7 +27,7 @@ from config import (
     TEMP_WARN_F, TEMP_CRIT_F, RSSI_WARN_DBM, RSSI_CRIT_DBM,
     CPU_TEMP_WARN_C, CPU_TEMP_CRIT_C,
 )
-from camera_mod import camera
+from camera import camera
 from sensors import read_temp_fahrenheit, median_distance_inches
 from wifi_net import wifi_status, ip_addr4, gw4, dns_servers
 from system_diag import cpu_temp_c, uptime_seconds, disk_usage_root, mem_usage
