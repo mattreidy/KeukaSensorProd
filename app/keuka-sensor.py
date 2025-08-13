@@ -4,11 +4,12 @@ import sys
 import time
 import json
 import re
+import shutil
 from typing import Optional
 import ipaddress
 import threading
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, Response, request, abort, redirect, url_for, make_response
 
@@ -68,7 +69,15 @@ DHCPCD_MARK_END   = "# KS-STATIC-END"
 DUCKDNS_CONF = APP_DIR / "duckdns.conf"           # token=... , domains=example1,example2
 DUCKDNS_LAST = APP_DIR / "duckdns_last.txt"
 
-VERSION = "1.5.1"
+# UI thresholds (override with env vars if desired)
+TEMP_WARN_F = float(os.environ.get("KS_TEMP_WARN_F", "85"))
+TEMP_CRIT_F = float(os.environ.get("KS_TEMP_CRIT_F", "95"))
+RSSI_WARN_DBM = int(os.environ.get("KS_RSSI_WARN_DBM", "-70"))
+RSSI_CRIT_DBM = int(os.environ.get("KS_RSSI_CRIT_DBM", "-80"))
+CPU_TEMP_WARN_C = float(os.environ.get("KS_CPU_WARN_C", "75"))  # warn at 75°C
+CPU_TEMP_CRIT_C = float(os.environ.get("KS_CPU_CRIT_C", "85"))  # crit at 85°C
+
+VERSION = "1.6.0"
 
 # ---------------- Flask -----------------
 app = Flask(__name__)
@@ -76,6 +85,9 @@ app = Flask(__name__)
 # ---------------- Utils -----------------
 def now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def utcnow_str() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 def basic_auth_ok(req) -> bool:
     a = req.authorization
@@ -112,6 +124,7 @@ class Camera:
         self.thread = threading.Thread(target=self._worker, daemon=True)
     def start(self):
         if cv2 is None: return
+        if self.running: return
         self.cap = cv2.VideoCapture(self.index)
         if not self.cap or not self.cap.isOpened(): return
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.w)
@@ -363,6 +376,215 @@ def apply_network(mode:str, ip_cidr:str="", router:str="", dns_csv:str="")->tupl
     time.sleep(1.0)
     return True, "Applied"
 
+# ---------------- System diagnostics ----------------
+def cpu_temp_c()->float:
+    # Try Linux thermal zone
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp","r") as f:
+            v = f.read().strip()
+            return float(v)/1000.0
+    except Exception:
+        pass
+    # Try vcgencmd
+    code,out = sh(["/usr/bin/vcgencmd","measure_temp"])
+    if code==0 and "temp=" in out:
+        try:
+            return float(out.split("temp=")[1].split("'")[0])
+        except Exception:
+            pass
+    return float('nan')
+
+def uptime_seconds()->float:
+    try:
+        with open("/proc/uptime","r") as f:
+            return float(f.read().split()[0])
+    except Exception:
+        return 0.0
+
+def disk_usage_root()->dict:
+    try:
+        total, used, free = shutil.disk_usage("/")
+        pct = (used/total*100.0) if total>0 else 0.0
+        return {"total": total, "used": used, "free": free, "percent": round(pct,1)}
+    except Exception:
+        return {"total": 0, "used": 0, "free": 0, "percent": 0.0}
+
+def mem_usage()->dict:
+    try:
+        m = {}
+        with open("/proc/meminfo","r") as f:
+            for ln in f:
+                if ":" in ln:
+                    k,v = ln.split(":",1)
+                    m[k.strip()] = v.strip()
+        def kiB_to_bytes(s):
+            try:
+                return int(s.split()[0])*1024
+            except Exception:
+                return 0
+        total = kiB_to_bytes(m.get("MemTotal","0 kB"))
+        avail = kiB_to_bytes(m.get("MemAvailable","0 kB"))
+        used = total - avail
+        pct = (used/total*100.0) if total>0 else 0.0
+        return {"total": total, "used": used, "free": avail, "percent": round(pct,1)}
+    except Exception:
+        return {"total": 0, "used": 0, "free": 0, "percent": 0.0}
+
+# ---------------- Shared UI helpers ----------------
+def _base_css():
+    # CSS for consistent modern style + dark mode
+    return """
+    :root {
+        --bg: #ffffff; --fg: #111; --muted:#666; --card:#f8f9fb; --border:#e5e7eb;
+        --ok:#0a7d27; --warn:#b85c00; --crit:#a40000; --idle:#666;
+        --link:#2563eb; --badge:#eef2ff;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --bg:#0b0f14; --fg:#e5e7eb; --muted:#94a3b8; --card:#0f1720; --border:#1f2937;
+            --link:#60a5fa; --badge:#111827;
+        }
+        img { filter: brightness(0.95) contrast(1.05); }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--fg); font: 15px/1.45 system-ui, Segoe UI, Roboto, Arial, sans-serif; }
+    a { color: var(--link); text-decoration: none; }
+    .topbar { position: sticky; top:0; z-index: 10; backdrop-filter: blur(6px);
+              background: color-mix(in oklab, var(--bg) 85%, transparent);
+              border-bottom: 1px solid var(--border); }
+    .topbar-inner { display:flex; gap:1rem; align-items:center; justify-content:space-between; padding:.8rem 1rem; max-width:1100px; margin:0 auto; }
+    .brand { font-weight: 700; letter-spacing:.2px; }
+    nav a { margin-right:.8rem; }
+    .container { max-width:1100px; margin: 1rem auto 2rem auto; padding: 0 1rem; }
+    h1 { font-size:1.6rem; margin: .4rem 0 .8rem 0; }
+    .muted { color: var(--muted); }
+    .grid { display:grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .card { background: var(--card); border:1px solid var(--border); border-radius:14px; padding:1rem; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { padding: .5rem .6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { text-align:left; width: 46%; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .btn { display:inline-block; padding:.5rem .8rem; border:1px solid var(--border); border-radius:10px; background:var(--bg); cursor:pointer; }
+    .badge { display:inline-block; padding:.15rem .5rem; border-radius:999px; font-size:.8rem; border:1px solid var(--border); background:var(--badge); }
+    .b-ok   { color:#fff; background: var(--ok); border-color: var(--ok); }
+    .b-warn { color:#fff; background: var(--warn); border-color: var(--warn); }
+    .b-crit { color:#fff; background: var(--crit); border-color: var(--crit); }
+    .b-idle { color:#fff; background: var(--idle); border-color: var(--idle); }
+    .flex { display:flex; align-items:center; gap:.6rem; }
+    .right { margin-left:auto; }
+    .bars { display:inline-flex; gap:2px; align-items:flex-end; height:12px; }
+    .bars span { width:3px; background:#cbd5e1; border-radius:2px; opacity:.7; }
+    .bars .on { background:#16a34a; opacity:1; }
+    @media (prefers-color-scheme: dark) {
+        .bars span { background:#334155; }
+        .bars .on { background:#22c55e; }
+    }
+    /* change highlights */
+    @keyframes flashUp { 0%{ background: rgba(22,163,74,.3);} 100%{ background: transparent;} }
+    @keyframes flashDown { 0%{ background: rgba(220,38,38,.32);} 100%{ background: transparent;} }
+    .upflash { animation: flashUp 1.2s ease-out; }
+    .downflash { animation: flashDown 1.2s ease-out; }
+    /* status dot */
+    .dot { inline-size:.6rem; block-size:.6rem; border-radius:999px; background:#9ca3af; display:inline-block; }
+    .dot.ok { background:#16a34a; }
+    .dot.err { background:#dc2626; }
+    /* image thumb */
+    .thumb { width:100%; max-width: 420px; border-radius:10px; border:1px solid var(--border); display:block; }
+    """
+
+def render_page(title: str, body_html: str, extra_head: str = "") -> str:
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <style>{_base_css()}</style>
+  {extra_head}
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">Keuka Sensor</div>
+      <nav class="muted">
+        <a href="/health">Health</a>
+        <a href="/webcam">Webcam</a>
+        <a href="/admin">Admin</a>
+      </nav>
+    </div>
+  </header>
+  <main class="container">
+    {body_html}
+  </main>
+</body>
+</html>"""
+
+# ---------------- Health payload (shared by JSON & SSE) ----------------
+# ---------------- Health payload (shared by JSON & SSE) ----------------
+def build_health_payload() -> dict:
+    # Sensor readings
+    tF = read_temp_fahrenheit()
+    dIn = median_distance_inches()
+    st = wifi_status() or {}
+
+    # System stats
+    cpu_c = cpu_temp_c()
+    up_s = uptime_seconds()
+
+    # --- CPU utilization (computed from /proc/stat deltas) ---
+    cpu_util = None
+    try:
+        with open("/proc/stat", "r") as f:
+            parts = f.readline().split()[1:]  # skip "cpu"
+        nums = list(map(int, parts[:8]))  # user nice system idle iowait irq softirq steal
+        idle = nums[3] + nums[4]          # idle + iowait
+        total = sum(nums)
+        prev = getattr(build_health_payload, "_prev_stat", None)
+        if prev is not None:
+            idle_d = idle - prev[0]
+            total_d = total - prev[1]
+            if total_d > 0:
+                cpu_util = round((1.0 - (idle_d / total_d)) * 100.0, 1)
+        build_health_payload._prev_stat = (idle, total)
+    except Exception:
+        pass
+
+    boot_utc = (datetime.utcnow() - timedelta(seconds=up_s)).strftime("%Y-%m-%d %H:%M:%S")
+
+    return {
+        "time_utc": utcnow_str(),
+        "tempF": None if (tF != tF) else round(tF, 2),
+        "distanceInches": None if (dIn != dIn) else round(dIn, 2),
+        "camera": "running" if camera.running else "idle",
+        "wifi": st,
+        "ip": {
+            WLAN_STA_IFACE: ip_addr4(WLAN_STA_IFACE),
+            WLAN_AP_IFACE:  ip_addr4(WLAN_AP_IFACE),
+        },
+        "gateway_sta": gw4(WLAN_STA_IFACE),
+        "gateway_ap":  gw4(WLAN_AP_IFACE),
+        "dns": dns_servers(),
+        "app": "keuka-sensor",
+        "version": VERSION,
+        "system": {
+            "cpu_temp_c": None if (cpu_c != cpu_c) else round(cpu_c, 1),
+            "cpu_util_pct": cpu_util,                 # <— NEW
+            "uptime_seconds": int(up_s),
+            "boot_time_utc": boot_utc,
+            "disk": disk_usage_root(),
+            "mem": mem_usage(),                       # has total/used/free/percent
+            "hostname": subprocess.getoutput("hostname")
+        },
+        "thresholds": {
+            "temp_warn_f": TEMP_WARN_F,
+            "temp_crit_f": TEMP_CRIT_F,
+            "rssi_warn_dbm": RSSI_WARN_DBM,
+            "rssi_crit_dbm": RSSI_CRIT_DBM,
+            "cpu_warn_c": CPU_TEMP_WARN_C,
+            "cpu_crit_c": CPU_TEMP_CRIT_C
+        }
+    }
+
 # ---------------- Routes ----------------
 @app.route('/')
 def root_plaintext():
@@ -374,13 +596,15 @@ def root_plaintext():
 
 @app.route('/webcam')
 def webcam_page():
-    html = (
-        "<!doctype html><html><head><meta charset='utf-8'><title>Webcam</title></head>"
-        "<body style='margin:0;background:#000;display:flex;align-items:center;justify-content:center;'>"
-        "<img src='/stream' style='max-width:100%;height:auto;'>"
-        "</body></html>"
-    )
-    return html
+    body = """
+      <h1>Webcam</h1>
+      <div class="card">
+        <p class="muted">Live MJPEG stream.</p>
+        <img src="/stream" alt="Webcam stream" style="max-width:100%;height:auto;border-radius:12px;border:1px solid var(--border)">
+      </div>
+      <p class="muted">If the image does not load, OpenCV may be unavailable.</p>
+    """
+    return render_page("Keuka Sensor – Webcam", body)
 
 @app.route('/stream')
 def stream_mjpeg():
@@ -396,157 +620,316 @@ def stream_mjpeg():
                    b"Content-Type: image/jpeg\r\n\r\n" + frm + b"\r\n")
     return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+@app.route('/snapshot')
+def snapshot_jpeg():
+    if cv2 is None: abort(503, 'Webcam not available (OpenCV missing).')
+    if not camera.running: camera.start()
+    # Wait briefly for a frame
+    t0=time.time()
+    frm=None
+    while time.time()-t0 < 2.0:
+        frm = camera.get_jpeg()
+        if frm: break
+        time.sleep(0.05)
+    if not frm: abort(503, 'No frame')
+    resp = Response(frm, mimetype='image/jpeg')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+# -------- Health (HTML dashboard) --------
 @app.route('/health')
 def health():
-    # Gather readings (server-side)
-    tF = read_temp_fahrenheit()
-    dIn = median_distance_inches()
-    st = wifi_status() or {}
-    info = {
-        "time_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-        "tempF": None if (tF != tF) else round(tF, 2),
-        "distanceInches": None if (dIn != dIn) else round(dIn, 2),
-        "camera": "running" if camera.running else "idle",
-        "wifi": st,
-        "ip": {
-            WLAN_STA_IFACE: ip_addr4(WLAN_STA_IFACE),
-            WLAN_AP_IFACE:  ip_addr4(WLAN_AP_IFACE),
-        },
-        "gateway_sta": gw4(WLAN_STA_IFACE),
-        "gateway_ap":  gw4(WLAN_AP_IFACE),
-        "dns": dns_servers(),
-        "app": "keuka-sensor",
-        "version": VERSION
-    }
-
-    # Render HTML with initial values embedded (so it shows even if fetch fails)
-    html = f"""
-    <!doctype html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>Keuka Sensor – Health</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {{ font-family: system-ui, Arial, sans-serif; margin: 2rem; }}
-            table {{ border-collapse: collapse; width: 100%; }}
-            th, td {{ border: 1px solid #ddd; padding: .5rem .6rem; text-align: left; }}
-            th {{ background: #f0f0f0; }}
-            .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
-            @keyframes flash {{
-                0% {{ background-color: #fff3a0; }}
-                100% {{ background-color: transparent; }}
-            }}
-            .flash {{ animation: flash 1.2s ease-out; }}
-            .muted {{ color:#666; font-size:.9rem; }}
-        </style>
-        <script id="seed" type="application/json">{json.dumps(info)}</script>
-        <script>
-            function fmt(v, fallback = "(n/a)") {{
-                if (v === null || v === undefined || v === "") return fallback;
-                return v;
-            }}
-            function updateCell(id, value) {{
-                const el = document.getElementById(id);
-                if (!el) return;
-                const newText = String(value);
-                if (el.textContent !== newText) {{
-                    el.textContent = newText;
-                    // restart the highlight animation
-                    el.classList.remove('flash');
-                    void el.offsetWidth; // reflow to reset animation
-                    el.classList.add('flash');
-                }}
-            }}
-            function render(data) {{
-                // Local time
-                const dt = new Date(String(data.time_utc).replace(' ', 'T') + 'Z');
-                updateCell('localTime', dt.toLocaleString());
-
-                updateCell('tempF', fmt(data.tempF));
-                updateCell('distanceInches', fmt(data.distanceInches));
-                updateCell('camera', fmt(data.camera));
-
-                const wifi = data.wifi || {{}};
-                updateCell('ssid', wifi.ssid ? wifi.ssid : "Not connected");
-                updateCell('rssi', fmt(wifi.signal_dbm));
-                updateCell('freq', fmt(wifi.freq_mhz));
-
-                updateCell('ip_sta', fmt(data.ip["{WLAN_STA_IFACE}"]));
-                updateCell('ip_ap', fmt(data.ip["{WLAN_AP_IFACE}"]));
-                updateCell('gw_sta', fmt(data.gateway_sta));
-                updateCell('gw_ap', fmt(data.gateway_ap));
-                updateCell('dns', (data.dns && data.dns.length) ? data.dns.join(", ") : "(n/a)");
-                updateCell('version', fmt(data.version));
-            }}
-            async function refresh() {{
-                try {{
-                    const r = await fetch('/health.json', {{ cache: 'no-store' }});
-                    if (!r.ok) throw new Error('HTTP ' + r.status);
-                    const data = await r.json();
-                    render(data);
-                    document.getElementById('status').textContent = "";
-                }} catch (e) {{
-                    document.getElementById('status').textContent = " (offline: " + e.message + ")";
-                }}
-            }}
-            window.addEventListener('DOMContentLoaded', () => {{
-                // Seed initial values immediately
-                try {{
-                    const seed = JSON.parse(document.getElementById('seed').textContent);
-                    render(seed);
-                }} catch (_e) {{}}
-                // Then poll every 5s
-                refresh();
-                setInterval(refresh, 5000);
-            }});
-        </script>
-    </head>
-    <body>
-        <h1>Keuka Sensor – Health<span id="status" class="muted"></span></h1>
-        <p><b>Local Time:</b> <span id="localTime"></span></p>
-        <table>
-            <tr><th>Temperature (°F)</th><td id="tempF"></td></tr>
-            <tr><th>Distance (in)</th><td id="distanceInches"></td></tr>
-            <tr><th>Camera</th><td id="camera"></td></tr>
-            <tr><th>Wi-Fi SSID</th><td id="ssid"></td></tr>
-            <tr><th>Wi-Fi RSSI (dBm)</th><td id="rssi"></td></tr>
-            <tr><th>Wi-Fi Frequency (MHz)</th><td id="freq"></td></tr>
-            <tr><th>IP ({WLAN_STA_IFACE})</th><td id="ip_sta" class="mono"></td></tr>
-            <tr><th>IP ({WLAN_AP_IFACE})</th><td id="ip_ap" class="mono"></td></tr>
-            <tr><th>Gateway (STA)</th><td id="gw_sta" class="mono"></td></tr>
-            <tr><th>Gateway (AP)</th><td id="gw_ap" class="mono"></td></tr>
-            <tr><th>DNS Servers</th><td id="dns" class="mono"></td></tr>
-            <tr><th>App</th><td>keuka-sensor</td></tr>
-            <tr><th>Version</th><td id="version"></td></tr>
-        </table>
-    </body>
-    </html>
+    info = build_health_payload()
+    extra_head = f"""
+    <script id="seed" type="application/json">{json.dumps(info)}</script>
     """
-    return html
+    body = f"""
+      <div class="flex" style="gap:.8rem;align-items:center;margin-bottom:.3rem">
+        <h1 style="margin:0">Health</h1>
+        <span id="connDot" class="dot" title="connection status"></span>
+        <span id="lastUpdated" class="muted">—</span>
+        <span class="right muted">Local Time: <span id="localTime"></span></span>
+      </div>
 
+      <div class="grid" style="margin-top:.6rem">
+        <div class="card">
+          <h3 style="margin-top:0">Environment</h3>
+          <table>
+            <tr><th>Temperature</th><td><span id="tempF"></span> °F <span id="tempBadge" class="badge"></span></td></tr>
+            <tr><th>Distance</th><td><span id="distanceInches"></span> in</td></tr>
+            <tr><th>Camera</th><td><span id="cameraBadge" class="badge"></span></td></tr>
+          </table>
+        </div>
 
+        <div class="card">
+          <h3 style="margin-top:0">Wi-Fi (STA {WLAN_STA_IFACE})</h3>
+          <table>
+            <tr><th>Status</th><td><span id="wifiStatus" class="badge"></span></td></tr>
+            <tr><th>SSID</th><td id="ssid"></td></tr>
+            <tr><th>Signal</th><td><span id="rssiBars" class="flex"></span></td></tr>
+            <tr><th>Frequency</th><td><span id="freq"></span> MHz</td></tr>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Networking</h3>
+          <table>
+            <tr><th>IPv4 ({WLAN_STA_IFACE})</th><td class="mono" id="ip_sta"></td></tr>
+            <tr><th>IPv4 ({WLAN_AP_IFACE})</th><td class="mono" id="ip_ap"></td></tr>
+            <tr><th>Gateway (STA)</th><td class="mono" id="gw_sta"></td></tr>
+            <tr><th>Gateway (AP)</th><td class="mono" id="gw_ap"></td></tr>
+            <tr><th>DNS Servers</th><td class="mono" id="dns"></td></tr>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">System</h3>
+          <table>
+            <tr><th>Hostname</th><td id="hostname"></td></tr>
+            <tr><th>CPU Temp</th><td><span id="cpuTemp"></span> °C <span id="cpuBadge" class="badge"></span></td></tr>
+            <tr><th>CPU Utilization</th><td><span id="cpuUtil"></span>%</td></tr>
+            <tr><th>Uptime</th><td><span id="uptime"></span> (<span id="bootLocal"></span> boot)</td></tr>
+            <tr><th>Disk</th><td><span id="diskPct"></span>% used <span class="mono" id="diskSizes"></span></td></tr>
+            <tr><th>Memory</th>
+                <td>
+                  <span id="memPct"></span>% used —
+                  <span class="mono" id="memUsed"></span> /
+                  <span class="mono" id="memTotal"></span>
+                  (free <span class="mono" id="memFree"></span>)
+                </td></tr>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Webcam</h3>
+          <a href="/webcam" title="Open live stream">
+            <img id="thumb" class="thumb" src="/snapshot?cb=0" alt="Webcam snapshot (click to open)" onerror="this.style.display='none'">
+          </a>
+          <div class="muted" style="margin-top:.4rem">Click thumbnail to open live stream.</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:1rem">
+        <div class="flex"><strong>Raw JSON</strong><button class="btn" onclick="copyJSON()">Copy</button><span id="copynote" class="muted"></span></div>
+        <pre id="rawjson" class="mono" style="white-space:pre-wrap;margin-top:.4rem"></pre>
+      </div>
+
+      <script>
+        // Helpers
+        function fmt(v, fallback="(n/a)") {{ return (v===null||v===undefined||v==="") ? fallback : v; }}
+        function bytes(n) {{
+          if (n===0) return "0 B";
+          const u=["B","KB","MB","GB","TB","PB"]; let i = Math.floor(Math.log(n)/Math.log(1024));
+          return (n/Math.pow(1024,i)).toFixed(i?1:0)+" "+u[i];
+        }}
+        function setBadge(el, level, text) {{
+          el.className = "badge " + (level ? "b-"+level : "");
+          el.textContent = text || "";
+        }}
+        function rssiBarsHTML(dbm) {{
+          if (dbm===null || dbm===undefined) return "(n/a)";
+          const v = Number(dbm);
+          let bars = 0;
+          if (v >= -50) bars = 5; else if (v >= -60) bars = 4; else if (v >= -67) bars = 3; else if (v >= -75) bars = 2; else if (v >= -82) bars = 1; else bars = 0;
+          const spans = Array.from({{length:5}}, (_,i)=>`<span class="${{i<bars?"on":""}}" style="height:${{4+i*2}}px"></span>`).join("");
+          return `<span class="bars" title="${{v}} dBm">${{spans}}</span><span class="muted"> ${{v}} dBm</span>`;
+        }}
+        function humanUptimeDHMS(sec) {{
+          let s = Number(sec);
+          const d=Math.floor(s/86400); s-=d*86400;
+          const h=Math.floor(s/3600); s-=h*3600;
+          const m=Math.floor(s/60);
+          const parts=[];
+          if (d) parts.push(d+"d");
+          parts.push(h+"h");
+          parts.push(m+"m");
+          return parts.join(" ");
+        }}
+
+        let prev = {{}};
+        function upDownFlash(el, key, newVal) {{
+          const was = prev[key];
+          prev[key] = newVal;
+          const n = Number(newVal);
+          const w = Number(was);
+          if (!isFinite(n) || !isFinite(w)) return; // only for numeric
+          if (n > w) {{ el.classList.remove("downflash"); void el.offsetWidth; el.classList.add("upflash"); }}
+          else if (n < w) {{ el.classList.remove("upflash"); void el.offsetWidth; el.classList.add("downflash"); }}
+        }}
+
+        function copyJSON() {{
+          const pre = document.getElementById('rawjson');
+          navigator.clipboard.writeText(pre.textContent).then(()=>{{
+            const n = document.getElementById('copynote');
+            n.textContent = "Copied!";
+            setTimeout(()=> n.textContent="", 1200);
+          }});
+        }}
+
+        let lastUpdateEpoch = 0;
+        function tickAgo() {{
+          const el = document.getElementById('lastUpdated');
+          if (!lastUpdateEpoch) {{ el.textContent = "—"; return; }}
+          const secs = Math.round((Date.now() - lastUpdateEpoch)/1000);
+          el.textContent = "Updated " + (secs===0 ? "just now" : secs + "s ago");
+        }}
+        setInterval(tickAgo, 1000);
+
+        function render(data) {{
+          // Local time
+          const dt = new Date(String(data.time_utc).replace(' ', 'T') + 'Z');
+          document.getElementById('localTime').textContent = dt.toLocaleString();
+
+          // JSON block
+          document.getElementById('rawjson').textContent = JSON.stringify(data, null, 2);
+
+          // Env (with change highlights)
+          const tempEl = document.getElementById('tempF');
+          tempEl.textContent = fmt(data.tempF);
+          upDownFlash(tempEl, "tempF", data.tempF);
+
+          const distEl = document.getElementById('distanceInches');
+          distEl.textContent = fmt(data.distanceInches);
+          upDownFlash(distEl, "distanceInches", data.distanceInches);
+
+          const camBadge = document.getElementById('cameraBadge');
+          setBadge(camBadge, (data.camera==="running"?"ok":"idle"), (data.camera==="running"?"Running":"Idle"));
+
+          // Wi-Fi
+          const ssid = (data.wifi && data.wifi.ssid) ? data.wifi.ssid : null;
+          document.getElementById('ssid').textContent = ssid || "Not connected";
+          document.getElementById('freq').textContent = fmt(data.wifi ? data.wifi.freq_mhz : null);
+          const rssi = data.wifi ? data.wifi.signal_dbm : null;
+          document.getElementById('rssiBars').innerHTML = rssiBarsHTML(rssi);
+          upDownFlash(document.getElementById('rssiBars'), "rssi", rssi);
+          const wifiStatus = document.getElementById('wifiStatus');
+          setBadge(wifiStatus, ssid ? "ok" : "warn", ssid ? "Connected" : "Not connected");
+
+          // Networking
+          document.getElementById('ip_sta').textContent = fmt(data.ip["{WLAN_STA_IFACE}"]);
+          document.getElementById('ip_ap').textContent = fmt(data.ip["{WLAN_AP_IFACE}"]);
+          document.getElementById('gw_sta').textContent = fmt(data.gateway_sta);
+          document.getElementById('gw_ap').textContent = fmt(data.gateway_ap);
+          document.getElementById('dns').textContent = (data.dns && data.dns.length) ? data.dns.join(", ") : "(n/a)";
+
+          // System
+          document.getElementById('hostname').textContent = fmt(data.system.hostname);
+          document.getElementById('cpuTemp').textContent = fmt(data.system.cpu_temp_c);
+          const cpuB = document.getElementById('cpuBadge');
+          let cpuLv = ""; let cpuTx="";
+          if (isFinite(data.system.cpu_temp_c)) {{
+            if (data.system.cpu_temp_c >= {CPU_TEMP_CRIT_C}) {{ cpuLv="crit"; cpuTx="Hot"; }}
+            else if (data.system.cpu_temp_c >= {CPU_TEMP_WARN_C}) {{ cpuLv="warn"; cpuTx="Warm"; }}
+            else {{ cpuLv="ok"; cpuTx="Cool"; }}
+          }}
+          setBadge(cpuB, cpuLv, cpuTx);
+
+          const cpuUtilEl = document.getElementById('cpuUtil');
+          cpuUtilEl.textContent = (data.system.cpu_util_pct == null) ? "(n/a)" : Number(data.system.cpu_util_pct).toFixed(1);
+          upDownFlash(cpuUtilEl, "cpuUtil", data.system.cpu_util_pct);
+
+          // Uptime in days hours minutes
+          document.getElementById('uptime').textContent = humanUptimeDHMS(data.system.uptime_seconds);
+          const bootDt = new Date(String(data.system.boot_time_utc).replace(' ', 'T') + 'Z');
+          document.getElementById('bootLocal').textContent = bootDt.toLocaleString();
+
+          // Disk
+          const d = data.system.disk;
+          document.getElementById('diskPct').textContent = fmt(d.percent);
+          document.getElementById('diskSizes').textContent = `${{bytes(d.used)}} / ${{bytes(d.total)}}`;
+
+          // Memory: total/used/free + percent
+          const m = data.system.mem;
+          document.getElementById('memPct').textContent = fmt(m.percent);
+          document.getElementById('memTotal').textContent = bytes(m.total||0);
+          document.getElementById('memUsed').textContent  = bytes(m.used||0);
+          document.getElementById('memFree').textContent  = bytes(m.free||0);
+
+          // refresh snapshot (cache-bust)
+          const th = document.getElementById('thumb');
+          if (th && th.style.display!=="none") {{
+            th.src = "/snapshot?cb=" + Date.now();
+          }}
+
+          lastUpdateEpoch = Date.now();
+          tickAgo();
+        }}
+
+        // Seed with server values
+        try {{
+          const seed = JSON.parse(document.getElementById('seed').textContent);
+          render(seed);
+        }} catch (_e) {{}}
+
+        // SSE hookup (with fallback to polling)
+        let es = null;
+        function connectSSE() {{
+          if (!window.EventSource) {{ document.getElementById('connDot').className = "dot"; pollFallback(); return; }}
+          es = new EventSource('/health.sse');
+          const dot = document.getElementById('connDot');
+          es.onopen = () => {{ dot.className="dot ok"; }};
+          es.onerror = () => {{
+            dot.className="dot err";
+            try {{ es.close(); }} catch(_e) {{}}
+            setTimeout(connectSSE, 3000);
+          }};
+          es.addEventListener('health', (e) => {{
+            const data = JSON.parse(e.data);
+            render(data);
+            dot.className="dot ok";
+          }});
+        }}
+        async function pollFallback() {{
+          const dot = document.getElementById('connDot');
+          async function once() {{
+            try {{
+              const r = await fetch('/health.json', {{cache:'no-store'}});
+              const data = await r.json();
+              render(data); dot.className="dot ok";
+            }} catch(_e) {{ dot.className="dot err"; }}
+          }}
+          once(); setInterval(once, 5000);
+        }}
+        connectSSE();
+      </script>
+    """
+    return render_page("Keuka Sensor – Health", body, extra_head)
+
+# JSON endpoint for programmatic access or fallback
 @app.route('/health.json')
 def health_json():
-    tF = read_temp_fahrenheit()
-    dIn = median_distance_inches()
-    st = wifi_status() or {}
-    return {
-        "time_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-        "tempF": None if (tF != tF) else round(tF, 2),
-        "distanceInches": None if (dIn != dIn) else round(dIn, 2),
-        "camera": "running" if camera.running else "idle",
-        "wifi": st,
-        "ip": {
-            WLAN_STA_IFACE: ip_addr4(WLAN_STA_IFACE),
-            WLAN_AP_IFACE:  ip_addr4(WLAN_AP_IFACE),
-        },
-        "gateway_sta": gw4(WLAN_STA_IFACE),
-        "gateway_ap":  gw4(WLAN_AP_IFACE),
-        "dns": dns_servers(),
-        "app": "keuka-sensor",
-        "version": VERSION
+    return build_health_payload()
+
+# Server-Sent Events endpoint (push updates ~5s)
+@app.route('/health.sse')
+def health_sse():
+    def stream():
+        # send initial quickly, then every 5s
+        yield f"event: health\ndata: {json.dumps(build_health_payload())}\n\n"
+        last_ping = time.time()
+        while True:
+            time.sleep(5)
+            yield f"event: health\ndata: {json.dumps(build_health_payload())}\n\n"
+            # keepalive comment every 15s (some proxies)
+            if time.time() - last_ping > 15:
+                yield ": keepalive\n\n"
+                last_ping = time.time()
+    headers = {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
     }
+    return Response(stream(), headers=headers)
+
+# ---------------- Admin ----------------
+def _admin_shell(title, inner_html):
+    return render_page(title, f"""
+      <h1 style="margin-top:.2rem">{title}</h1>
+      <div class="card">{inner_html}</div>
+    """)
 
 @app.route('/admin', methods=['GET'])
 @app.route('/admin/<action>', methods=['POST'])
@@ -570,61 +953,63 @@ def admin(action=None):
     host=subprocess.getoutput('hostname')
     st=wifi_status()
     html = f"""
-    <!doctype html><html><head><meta charset='utf-8'><title>Keuka Sensor Admin</title>
-    <style>body{{font-family:system-ui,Segoe UI,Arial;margin:2rem}}a,button{{font-size:1rem}}button{{padding:.6rem 1rem;margin-right:.6rem}}.card{{border:1px solid #ddd;border-radius:10px;padding:1rem;margin:.5rem 0}}</style></head>
-    <body>
-      <h1>Keuka Sensor – Admin</h1>
-      <div class='card'><b>Time:</b> {now()}<br><b>Host:</b> {host}<br><b>IP:</b> {ip}<br>
-        <b>Wi-Fi (STA {WLAN_STA_IFACE}):</b> SSID {st.get('ssid') or '(n/a)'} | RSSI {st.get('signal_dbm') or '(n/a)'} dBm | Freq {st.get('freq_mhz') or '(n/a)'} MHz
+      <div class='grid'>
+        <div class='card'>
+          <div><b>Server Time (UTC):</b> {utcnow_str()}</div>
+          <div><b>Host:</b> {host}</div>
+          <div><b>IP (primary):</b> {ip}</div>
+          <div><b>Wi-Fi (STA {WLAN_STA_IFACE}):</b> SSID {st.get('ssid') or '(n/a)'} | RSSI {st.get('signal_dbm') or '(n/a)'} dBm | Freq {st.get('freq_mhz') or '(n/a)'} MHz</div>
+        </div>
+        <div class='card'>
+          <form method='post' action='/admin/update' style='display:inline'><button class="btn">Update Code</button></form>
+          <form method='post' action='/admin/restart' style='display:inline;margin-left:.5rem'><button class="btn">Restart Service</button></form>
+          <form method='post' action='/admin/reboot' style='display:inline;margin-left:.5rem' onsubmit="return confirm('Reboot now?')"><button class="btn">Reboot Pi</button></form>
+          <div style='margin-top:.6rem'>
+            <a class="btn" href='/admin/wifi'>Wi-Fi Setup</a>
+            <a class="btn" style='margin-left:.4rem' href='/admin/network'>Network (DHCP/Static)</a>
+            <a class="btn" style='margin-left:.4rem' href='/admin/duckdns'>DuckDNS</a>
+          </div>
+        </div>
       </div>
-      <div class='card'>
-        <form method='post' action='/admin/update' style='display:inline'><button>Update Code</button></form>
-        <form method='post' action='/admin/restart' style='display:inline'><button>Restart Service</button></form>
-        <form method='post' action='/admin/reboot' style='display:inline' onsubmit="return confirm('Reboot now?')"><button>Reboot Pi</button></form>
-        <a href='/admin/wifi' style='margin-left:1rem'>Wi-Fi Setup</a> |
-        <a href='/admin/network' style='margin-left:1rem'>Network (DHCP/Static)</a> |
-        <a href='/admin/duckdns' style='margin-left:1rem'>DuckDNS</a>
-      </div>
-    </body></html>
+      <p class="muted" style="margin-top:.6rem">Times on admin pages are server UTC; Health shows local browser time.</p>
     """
-    return html
+    return render_page("Keuka Sensor – Admin", html)
 
-# ---------------- Admin: Wi-Fi scan/connect (existing) ----------------
+# ---------------- Admin: Wi-Fi scan/connect ----------------
 @app.route('/admin/wifi')
 def admin_wifi():
     if not basic_auth_ok(request):
         return Response('Auth required',401,{"WWW-Authenticate":'Basic realm="KeukaSensor"'})
-    html = f"""
-    <!doctype html><html><head><meta charset='utf-8'><title>Wi-Fi Setup</title>
-    <style>body{{font-family:system-ui,Segoe UI,Arial;margin:2rem}} table{{border-collapse:collapse}} td,th{{border:1px solid #ddd;padding:.4rem .6rem}}</style>
-    <script>
-      async function doScan(){{
-        const r = await fetch('/admin/wifi/scan');
-        const data = await r.json();
-        const tb = document.getElementById('nets'); tb.innerHTML='';
-        data.forEach(n=>{{
-          const tr=document.createElement('tr');
-          tr.innerHTML=`<td>${{n.ssid||'(hidden)'}} </td><td>${{n.signal_dbm||''}}</td><td>${{n.freq_mhz||''}}</td>
-                         <td><button onclick=\\"sel('${{n.ssid||''}}')\\">Select</button></td>`;
-          tb.appendChild(tr);
-        }});
-      }}
-      function sel(ssid){{ document.getElementById('ssid').value = ssid; window.scrollTo(0,document.body.scrollHeight); }}
-    </script>
-    </head><body>
-      <h1>Wi-Fi Setup (STA {WLAN_STA_IFACE})</h1>
-      <button onclick='doScan()'>Scan Networks</button>
-      <table style='margin-top:1rem'><thead><tr><th>SSID</th><th>RSSI (dBm)</th><th>Freq (MHz)</th><th></th></tr></thead><tbody id='nets'></tbody></table>
-      <h2>Add/Connect</h2>
-      <form method='post' action='/admin/wifi/connect'>
-        <label>SSID <input id='ssid' name='ssid' required></label>
-        <label style='margin-left:1rem'>Password <input name='psk' type='password' required></label>
-        <button type='submit' style='margin-left:1rem'>Connect</button>
-      </form>
-      <p>Tip: If scan shows nothing (adapter missing), you can still enter SSID and password manually.</p>
-    </body></html>
+    body = f"""
+      <h1 style="margin-top:.2rem">Wi-Fi Setup (STA {WLAN_STA_IFACE})</h1>
+      <div class="card">
+        <button class="btn" onclick='doScan()'>Scan Networks</button>
+        <table style='margin-top:1rem'><thead><tr><th>SSID</th><th>RSSI (dBm)</th><th>Freq (MHz)</th><th></th></tr></thead><tbody id='nets'></tbody></table>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">Add/Connect</h3>
+        <form method='post' action='/admin/wifi/connect' class="flex" style="flex-wrap:wrap">
+          <label>SSID <input id='ssid' name='ssid' required style="margin-left:.4rem"></label>
+          <label style='margin-left:1rem'>Password <input name='psk' type='password' required style="margin-left:.4rem"></label>
+          <button type='submit' class="btn" style='margin-left:1rem'>Connect</button>
+        </form>
+        <p class="muted" style="margin-top:.4rem">Tip: If scan shows nothing (adapter missing), you can still enter SSID and password manually.</p>
+      </div>
+      <script>
+        async function doScan(){{
+          const r = await fetch('/admin/wifi/scan'); const data = await r.json();
+          const tb = document.getElementById('nets'); tb.innerHTML='';
+          data.forEach(n=>{{
+            const tr=document.createElement('tr');
+            tr.innerHTML=`<td>${{n.ssid||'(hidden)'}} </td><td>${{n.signal_dbm||''}}</td><td>${{n.freq_mhz||''}}</td>
+                           <td><button class="btn" onclick="sel('${{(n.ssid||'').replace(/'/g, "\\'")}}')">Select</button></td>`;
+            tb.appendChild(tr);
+          }});
+        }}
+        function sel(ssid){{ document.getElementById('ssid').value = ssid; window.scrollTo(0,document.body.scrollHeight); }}
+      </script>
     """
-    return html
+    return render_page("Keuka Sensor – Wi-Fi", body)
 
 @app.route('/admin/wifi/scan')
 def wifi_scan_api():
@@ -653,37 +1038,39 @@ def network_page():
     gw = gw4(WLAN_STA_IFACE) or "(none)"
     dns = ", ".join(dns_servers()) or "(none)"
     ip_ap = ip_addr4(WLAN_AP_IFACE) or "(none)"
-    html = f"""
-    <!doctype html><html><head><meta charset='utf-8'><title>Network</title>
-    <style>body{{font-family:system-ui,Segoe UI,Arial;margin:2rem}}label{{display:inline-block;min-width:140px}}input{{width:240px}}</style></head>
-    <body>
-      <h1>Network (IPv4)</h1>
-      <div>
-        <h3>Current (STA {WLAN_STA_IFACE})</h3>
-        <div>SSID: <b>{st.get('ssid') or '(n/a)'}</b> | RSSI: <b>{st.get('signal_dbm') or '(n/a)'} dBm</b> | Freq: <b>{st.get('freq_mhz') or '(n/a)'} MHz</b></div>
-        <div>IP: <b>{ip_sta}</b> | Gateway: <b>{gw}</b> | DNS: <b>{dns}</b></div>
-        <h3>Provisioning AP (wlan0)</h3>
-        <div>IP: <b>{ip_ap}</b> (AP stays available for recovery)</div>
+    body = f"""
+      <h1 style="margin-top:.2rem">Network (IPv4)</h1>
+      <div class="grid">
+        <div class="card">
+          <h3 style="margin-top:0">Current (STA {WLAN_STA_IFACE})</h3>
+          <div>SSID: <b>{st.get('ssid') or '(n/a)'}</b></div>
+          <div>RSSI: <b>{st.get('signal_dbm') or '(n/a)'} dBm</b> | Freq: <b>{st.get('freq_mhz') or '(n/a)'} MHz</b></div>
+          <div>IP: <b>{ip_sta}</b> | Gateway: <b>{gw}</b> | DNS: <b>{dns}</b></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">Provisioning AP (wlan0)</h3>
+          <div>IP: <b>{ip_ap}</b> (AP stays available for recovery)</div>
+        </div>
       </div>
-      <hr>
-      <h2>Change IPv4 mode for {WLAN_STA_IFACE}</h2>
-      <form method='post' action='/admin/network/apply'>
-        <p>
-          <label>Mode</label>
-          <select name='mode'>
-            <option value='dhcp' {"selected" if mode.get("mode")!="static" else ""}>DHCP (default)</option>
-            <option value='static' {"selected" if mode.get("mode")=="static" else ""}>Static</option>
-          </select>
-        </p>
-        <p><label>Static IP (CIDR)</label><input name='ip' placeholder='192.168.1.50/24' value="{mode.get('ip','') or ''}"></p>
-        <p><label>Gateway</label><input name='gw' placeholder='192.168.1.1' value="{mode.get('router','') or ''}"></p>
-        <p><label>DNS (comma list)</label><input name='dns' placeholder='1.1.1.1,8.8.8.8' value="{",".join(mode.get('dns',[]))}"></p>
-        <p><button type='submit'>Apply</button> <span style='margin-left:.6rem;color:#666'>Note: you may lose this session if IP changes—use the AP at <b>http://192.168.50.1/admin</b> if needed.</span></p>
-      </form>
-      <p><a href='/admin'>Back to Admin</a></p>
-    </body></html>
+      <div class="card" style="margin-top:1rem">
+        <h3 style="margin-top:0">Change IPv4 mode for {WLAN_STA_IFACE}</h3>
+        <form method='post' action='/admin/network/apply'>
+          <p>
+            <label>Mode</label>
+            <select name='mode'>
+              <option value='dhcp' {"selected" if mode.get("mode")!="static" else ""}>DHCP (default)</option>
+              <option value='static' {"selected" if mode.get("mode")=="static" else ""}>Static</option>
+            </select>
+          </p>
+          <p><label>Static IP (CIDR)</label><br><input name='ip' placeholder='192.168.1.50/24' value="{mode.get('ip','') or ''}" style="width:260px"></p>
+          <p><label>Gateway</label><br><input name='gw' placeholder='192.168.1.1' value="{mode.get('router','') or ''}" style="width:260px"></p>
+          <p><label>DNS (comma list)</label><br><input name='dns' placeholder='1.1.1.1,8.8.8.8' value="{",".join(mode.get('dns',[]))}" style="width:260px"></p>
+          <p><button type='submit' class="btn">Apply</button>
+           <span class='muted' style='margin-left:.6rem'>Note: you may lose this session if IP changes—use the AP at <b>http://192.168.50.1/admin</b> if needed.</span></p>
+        </form>
+      </div>
     """
-    return html
+    return render_page("Keuka Sensor – Network", body)
 
 @app.route('/admin/network/apply', methods=['POST'])
 def network_apply():
@@ -721,29 +1108,28 @@ def duckdns_page():
     if not basic_auth_ok(request):
         return Response('Auth required',401,{"WWW-Authenticate":'Basic realm="KeukaSensor"'})
     dd = duckdns_read()
-    html = f"""
-    <!doctype html><html><head><meta charset='utf-8'><title>DuckDNS</title>
-    <style>body{{font-family:system-ui,Segoe UI,Arial;margin:2rem}}label{{display:inline-block;min-width:140px}}</style></head>
-    <body>
-      <h1>DuckDNS updater</h1>
-      <p>Get your <b>token</b> and create subdomain(s) at <b>duckdns.org</b>. This device will update your public IP automatically.</p>
-      <form method='post' action='/admin/duckdns/save'>
-        <p><label>Token</label><input name='token' value="{dd['token']}" style='width:360px'></p>
-        <p><label>Domains</label><input name='domains' value="{dd['domains']}" style='width:360px'> <span style='color:#666'>(comma separated, e.g. <i>keukasensor1,keukasensor2</i>)</span></p>
-        <p>
-          <button type='submit'>Save</button>
-          <a href='/admin/duckdns/update' style='margin-left:1rem'>Update Now</a>
-          <a href='/admin/duckdns/enable' style='margin-left:1rem'>Enable Timer</a>
-          <a href='/admin/duckdns/disable' style='margin-left:1rem'>Disable Timer</a>
-        </p>
-      </form>
-      <h3>Status</h3>
-      <div>Timer enabled: <b>{"yes" if dd['enabled'] else "no"}</b></div>
-      <pre style='background:#f7f7f7;border:1px solid #ddd;padding:8px'>{dd['last'] or '(no recent log)'}</pre>
-      <p><a href='/admin'>Back to Admin</a></p>
-    </body></html>
+    body = f"""
+      <h1 style="margin-top:.2rem">DuckDNS updater</h1>
+      <div class="card">
+        <p>Get your <b>token</b> and create subdomain(s) at <b>duckdns.org</b>. This device will update your public IP automatically.</p>
+        <form method='post' action='/admin/duckdns/save'>
+          <p><label>Token</label><br><input name='token' value="{dd['token']}" style='width:360px'></p>
+          <p><label>Domains</label><br><input name='domains' value="{dd['domains']}" style='width:360px'> <span class='muted'>(comma separated, e.g. <i>keukasensor1,keukasensor2</i>)</span></p>
+          <p>
+            <button type='submit' class="btn">Save</button>
+            <a class="btn" href='/admin/duckdns/update' style='margin-left:.4rem'>Update Now</a>
+            <a class="btn" href='/admin/duckdns/enable' style='margin-left:.4rem'>Enable Timer</a>
+            <a class="btn" href='/admin/duckdns/disable' style='margin-left:.4rem'>Disable Timer</a>
+          </p>
+        </form>
+      </div>
+      <div class="card" style="margin-top:1rem">
+        <h3 style="margin-top:0">Status</h3>
+        <div>Timer enabled: <span class="badge {('b-ok' if dd['enabled'] else 'b-warn')}">{'yes' if dd['enabled'] else 'no'}</span></div>
+        <pre style='background:var(--bg);border:1px solid var(--border);padding:8px'>{dd['last'] or '(no recent log)'}</pre>
+      </div>
     """
-    return html
+    return render_page("Keuka Sensor – DuckDNS", body)
 
 @app.route('/admin/duckdns/save', methods=['POST'])
 def duckdns_save():
@@ -778,4 +1164,3 @@ def duckdns_disable():
 if __name__ == '__main__':
     # Always run on port 5000 for development/testing
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
-
