@@ -1,22 +1,39 @@
+# /etc/systemd/system/keuka-sensor.service
 [Unit]
 Description=Keuka Sensor (Gunicorn, STA+AP Support)
-After=network-online.target
+After=network-online.target hostapd.service wpa_supplicant@wlan1.service dhcpcd.service
 Wants=network-online.target
 
 [Service]
-Type=notify
+# Gunicorn does not send sd_notify by default
+Type=simple
+
 User=pi
 Group=pi
 WorkingDirectory=/home/pi/KeukaSensorProd/keuka
-# Load environment vars for STA/AP interface selection
+
+# Safe defaults (STA on wlan1, AP on wlan0); the EnvironmentFile below can override these
+Environment=KS_STA_IFACE=wlan1 KS_AP_IFACE=wlan0
+# Load site-specific overrides if present
 EnvironmentFile=/etc/default/keuka-sensor
-# Start Gunicorn with the new modular app
+
+# Log straight to journald
+StandardOutput=journal
+StandardError=journal
+
+# Start Gunicorn (uses your repo's config file)
 ExecStart=/home/pi/KeukaSensorProd/venv/bin/gunicorn \
     -c /home/pi/KeukaSensorProd/config/gunicorn.conf.py \
     'app:create_app()'
+
 ExecReload=/bin/kill -HUP $MAINPID
+
 Restart=always
+RestartSec=2
+TimeoutStartSec=60
 TimeoutStopSec=5
+KillMode=mixed
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
