@@ -7,6 +7,7 @@
 # These functions wrap system tools: iw, wpa_cli, ip, systemctl, etc.
 # -----------------------------------------------------------------------------
 
+from __future__ import annotations
 import re
 import time
 import ipaddress
