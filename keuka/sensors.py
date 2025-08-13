@@ -9,6 +9,13 @@
 import os
 import time
 
+# --- Hard-coded GPIO pins (BCM numbering) ---
+TRIG_PIN = 23            # Ultrasonic trigger pin
+ECHO_PIN = 24            # Ultrasonic echo pin
+TEMP_PIN = 6             # DS18B20 data pin (requires 1-Wire enabled in /boot/config.txt)
+ULTRASONIC_TIMEOUT_S = 0.04
+SAMPLES = 5
+
 # GPIO (allow import on dev machines without raising)
 try:
     import RPi.GPIO as GPIO  # type: ignore
@@ -28,8 +35,6 @@ try:
     from w1thermsensor import W1ThermSensor  # type: ignore
 except Exception:
     W1ThermSensor = None
-
-from config import TRIG_PIN, ECHO_PIN, ULTRASONIC_TIMEOUT_S, SAMPLES
 
 # --- Ultrasonic setup (lazy) ---
 _ultra_ready = False
@@ -51,17 +56,22 @@ def _ensure_ultra():
 def read_distance_inches(timeout_s: float = ULTRASONIC_TIMEOUT_S) -> float:
     """Single ultrasonic read; returns NaN on timeout/errors."""
     _ensure_ultra()
-    GPIO.output(TRIG_PIN, GPIO.LOW); time.sleep(0.000002)
-    GPIO.output(TRIG_PIN, GPIO.HIGH); time.sleep(0.000010)
     GPIO.output(TRIG_PIN, GPIO.LOW)
+    time.sleep(0.000002)
+    GPIO.output(TRIG_PIN, GPIO.HIGH)
+    time.sleep(0.000010)
+    GPIO.output(TRIG_PIN, GPIO.LOW)
+
     start = time.time()
     while GPIO.input(ECHO_PIN) == 0:
         if time.time() - start > timeout_s:
             return float('nan')
+
     t0 = time.time()
     while GPIO.input(ECHO_PIN) == 1:
         if time.time() - t0 > timeout_s:
             return float('nan')
+
     t1 = time.time()
     dt = t1 - t0
     # Speed of sound conversion constant (inches/sec) * delta time / 2 (round-trip)
@@ -91,9 +101,10 @@ def read_temp_fahrenheit() -> float:
             ss = W1ThermSensor.get_available_sensors()
             if ss:
                 c = ss[0].get_temperature()
-                return c * 9.0/5.0 + 32.0
+                return c * 9.0 / 5.0 + 32.0
     except Exception:
         pass
+
     # /sys fallback
     base = '/sys/bus/w1/devices'
     try:
@@ -102,7 +113,8 @@ def read_temp_fahrenheit() -> float:
             data = f.read()
         if 'YES' in data:
             c = float(data.strip().split('t=')[-1]) / 1000.0
-            return c * 9.0/5.0 + 32.0
+            return c * 9.0 / 5.0 + 32.0
     except Exception:
         pass
+
     return float('nan')
