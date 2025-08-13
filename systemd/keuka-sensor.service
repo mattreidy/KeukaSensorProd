@@ -1,44 +1,22 @@
 [Unit]
-Description=Keuka Sensor (Gunicorn WSGI)
+Description=Keuka Sensor (Gunicorn, STA+AP Support)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
 User=pi
 Group=pi
 WorkingDirectory=/home/pi/KeukaSensorProd/keuka
-
-# Use Gunicorn with config and the WSGI entrypoint
-ExecStart=/home/pi/KeukaSensorProd/venv/bin/gunicorn -c /home/pi/KeukaSensorProd/keuka/gunicorn.conf.py wsgi:app
-
+# Load environment vars for STA/AP interface selection
+EnvironmentFile=/etc/default/keuka-sensor
+# Start Gunicorn with the new modular app
+ExecStart=/home/pi/KeukaSensorProd/venv/bin/gunicorn \
+    -c /home/pi/KeukaSensorProd/config/gunicorn.conf.py \
+    'app:create_app()'
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
-RestartSec=3
-KillMode=mixed
-TimeoutStopSec=10
-
-# Environment (safe defaults; override via EnvironmentFile)
-Environment=PYTHONUNBUFFERED=1
-Environment=FLASK_ENV=production
-Environment=KS_STA_IFACE=wlan1
-Environment=KS_AP_IFACE=wlan0
-Environment=KS_ADMIN_USER=admin
-Environment=KS_ADMIN_PASS=password
-Environment=KS_CAMERA_INDEX=0
-Environment=KS_FRAME_W=640
-Environment=KS_FRAME_H=480
-Environment=KS_JPEG_Q=70
-Environment=KS_TEMP_WARN_F=85
-Environment=KS_TEMP_CRIT_F=95
-Environment=KS_CPU_WARN_C=75
-Environment=KS_CPU_CRIT_C=85
-EnvironmentFile=-/etc/default/keuka-sensor
-
-StandardOutput=journal
-StandardError=journal
-
-# Slightly raise file descriptor limit for many SSE clients
-LimitNOFILE=4096
+TimeoutStopSec=5
 
 [Install]
 WantedBy=multi-user.target
