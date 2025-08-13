@@ -7,7 +7,7 @@ Wants=network-online.target
 [Service]
 # Gunicorn does not send sd_notify by default
 Type=simple
-
+NoNewPrivileges=false
 User=pi
 Group=pi
 WorkingDirectory=/home/pi/KeukaSensorProd/keuka
@@ -33,7 +33,7 @@ RestartSec=2
 TimeoutStartSec=60
 TimeoutStopSec=5
 KillMode=mixed
-NoNewPrivileges=true
+
 
 [Install]
 WantedBy=multi-user.target
