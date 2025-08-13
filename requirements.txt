@@ -11,6 +11,8 @@ click>=8.1.8,<8.2.0
 colorama==0.4.6
     # via click
 
+gunicorn>=21.0,<22
+
 # Flask: last Py3.9 release vs latest for Py3.10+
 flask==2.3.3; python_version < "3.10"
 flask==3.1.1; python_version >= "3.10"

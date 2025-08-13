@@ -1,15 +1,21 @@
 [Unit]
-Description=WiFi Watchdog Service
+Description=Keuka Sensor Wi-Fi watchdog
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=pi
+Group=pi
 WorkingDirectory=/home/pi/KeukaSensorProd
-ExecStart=/bin/bash /home/pi/KeukaSensorProd/scripts/wifi-watchdog.sh
+ExecStart=/home/pi/KeukaSensorProd/scripts/wifi-watchdog.sh
 Restart=always
-RestartSec=30
+RestartSec=10
+Environment=KS_STA_IFACE=wlan1
+Environment=KS_AP_IFACE=wlan0
+EnvironmentFile=-/etc/default/keuka-sensor
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

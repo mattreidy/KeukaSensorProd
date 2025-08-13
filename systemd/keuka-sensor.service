@@ -1,20 +1,44 @@
-# /etc/systemd/system/keuka-sensor.service
 [Unit]
-Description=Keuka Water Temp & Level Node
+Description=Keuka Sensor (Gunicorn WSGI)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/KeukaSensorProd
-EnvironmentFile=/etc/keuka-sensor/keuka.env
-ExecStart=/home/pi/KeukaSensorProd/venv/bin/python /home/pi/KeukaSensorProd/app/keuka-sensor.py
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
+Group=pi
+WorkingDirectory=/home/pi/KeukaSensorProd/keuka
+
+# Use Gunicorn with config and the WSGI entrypoint
+ExecStart=/home/pi/KeukaSensorProd/venv/bin/gunicorn -c /home/pi/KeukaSensorProd/keuka/gunicorn.conf.py wsgi:app
+
 Restart=always
 RestartSec=3
+KillMode=mixed
+TimeoutStopSec=10
+
+# Environment (safe defaults; override via EnvironmentFile)
+Environment=PYTHONUNBUFFERED=1
+Environment=FLASK_ENV=production
+Environment=KS_STA_IFACE=wlan1
+Environment=KS_AP_IFACE=wlan0
+Environment=KS_ADMIN_USER=admin
+Environment=KS_ADMIN_PASS=password
+Environment=KS_CAMERA_INDEX=0
+Environment=KS_FRAME_W=640
+Environment=KS_FRAME_H=480
+Environment=KS_JPEG_Q=70
+Environment=KS_TEMP_WARN_F=85
+Environment=KS_TEMP_CRIT_F=95
+Environment=KS_CPU_WARN_C=75
+Environment=KS_CPU_CRIT_C=85
+EnvironmentFile=-/etc/default/keuka-sensor
+
+StandardOutput=journal
+StandardError=journal
+
+# Slightly raise file descriptor limit for many SSE clients
+LimitNOFILE=4096
 
 [Install]
 WantedBy=multi-user.target

@@ -1,3 +1,5 @@
+gunicorn>=21.0,<22
+
 # Flask: Pin compatible versions for each Python range
 flask==2.3.3; python_version < "3.10"
 flask==3.1.1; python_version >= "3.10"

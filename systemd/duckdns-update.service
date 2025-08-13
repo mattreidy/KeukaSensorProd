@@ -1,8 +1,15 @@
 [Unit]
-Description=DuckDNS one-shot updater
+Description=DuckDNS updater (reads config/duckdns.conf)
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash /home/pi/KeukaSensorProd/scripts/duckdns_update.sh
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/KeukaSensorProd
+ExecStart=/home/pi/KeukaSensorProd/scripts/duckdns_update.sh
+# If your script needs env (token/domains) via /etc/default/duckdns, add:
+EnvironmentFile=-/etc/default/duckdns
+StandardOutput=journal
+StandardError=journal
