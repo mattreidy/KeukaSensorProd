@@ -398,24 +398,149 @@ def stream_mjpeg():
 
 @app.route('/health')
 def health():
-    tF=read_temp_fahrenheit(); dIn=median_distance_inches()
-    st=wifi_status()
+    # Gather readings
+    tF = read_temp_fahrenheit()
+    dIn = median_distance_inches()
+    st = wifi_status() or {}
+
+    # Compose info dict (server sends UTC; browser will render local)
     info = {
-        "time": now(),
-        "tempF": None if (tF!=tF) else round(tF,2),
-        "distanceInches": None if (dIn!=dIn) else round(dIn,2),
+        "time_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "tempF": None if (tF != tF) else round(tF, 2),
+        "distanceInches": None if (dIn != dIn) else round(dIn, 2),
         "camera": "running" if camera.running else "idle",
         "wifi": st,
         "ip": {
             WLAN_STA_IFACE: ip_addr4(WLAN_STA_IFACE),
             WLAN_AP_IFACE:  ip_addr4(WLAN_AP_IFACE),
         },
-        "gateway": gw4(WLAN_STA_IFACE),
+        "gateway_sta": gw4(WLAN_STA_IFACE),
+        "gateway_ap":  gw4(WLAN_AP_IFACE),
         "dns": dns_servers(),
         "app": "keuka-sensor",
         "version": VERSION
     }
-    return info
+
+    # Friendly helpers for display
+    ssid = st.get('ssid')
+    rssi = st.get('signal_dbm')
+    freq = st.get('freq_mhz')
+
+    def fmt(val, fallback="(n/a)"):
+        return val if (val is not None and val != "") else fallback
+
+    def badge(text, kind):
+        # kind: ok | warn | idle
+        colors = {
+            "ok":   "#0a7d27",
+            "warn": "#b85c00",
+            "idle": "#666666",
+        }
+        return f"<span style='display:inline-block;padding:.15rem .5rem;border-radius:999px;color:#fff;background:{colors.get(kind, '#666')};font-size:.85rem'>{text}</span>"
+
+    cam_badge = badge("Running", "ok") if info["camera"] == "running" else badge("Idle", "idle")
+    wifi_badge = badge("Connected", "ok") if ssid else badge("Not connected", "warn")
+
+    # Render HTML
+    html = f"""
+    <!doctype html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Keuka Sensor – Health</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            :root {{
+                --bg:#ffffff; --fg:#111; --muted:#666; --card:#f7f7f7; --border:#ddd;
+            }}
+            body {{ font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; margin: 2rem; color: var(--fg); background: var(--bg); }}
+            h1 {{ margin: 0 0 .25rem 0; font-weight: 650; }}
+            .muted {{ color: var(--muted); }}
+            .cards {{ display: grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap: 1rem; margin-top: 1rem; }}
+            .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; }}
+            table {{ width: 100%; border-collapse: collapse; }}
+            th, td {{ padding: .5rem .6rem; border-bottom: 1px solid var(--border); vertical-align: top; }}
+            th {{ text-align: left; width: 42%; }}
+            .small {{ font-size: .9rem; }}
+            .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+        </style>
+        <script>
+            function showLocalTime(utcString) {{
+                // Interpret server string as UTC and render in local time
+                const date = new Date(utcString.replace(' ', 'T') + 'Z');
+                const el = document.getElementById('localTime');
+                if (el) el.textContent = date.toLocaleString();
+            }}
+            function copyJSON() {{
+                const pre = document.getElementById('rawjson');
+                if (!pre) return;
+                navigator.clipboard.writeText(pre.textContent).then(()=>{{
+                    const n = document.getElementById('copynote');
+                    if (n) {{ n.textContent = "Copied!"; setTimeout(()=> n.textContent="", 1200); }}
+                }});
+            }}
+            window.addEventListener('DOMContentLoaded', () => {{
+                showLocalTime("{info['time_utc']}");
+            }});
+        </script>
+    </head>
+    <body>
+        <h1>Keuka Sensor – Health</h1>
+        <div class="small"><b>Local Time:</b> <span id="localTime"></span></div>
+
+        <div class="cards">
+            <div class="card">
+                <h3>Environment</h3>
+                <table>
+                    <tr><th>Temperature (°F)</th><td>{fmt(info['tempF'])}</td></tr>
+                    <tr><th>Distance (in)</th><td>{fmt(info['distanceInches'])}</td></tr>
+                    <tr><th>Camera</th><td>{cam_badge}</td></tr>
+                </table>
+            </div>
+
+            <div class="card">
+                <h3>Wi-Fi (STA {WLAN_STA_IFACE})</h3>
+                <table>
+                    <tr><th>Status</th><td>{wifi_badge}</td></tr>
+                    <tr><th>SSID</th><td>{fmt(ssid, "Not connected")}</td></tr>
+                    <tr><th>RSSI (dBm)</th><td>{fmt(rssi)}</td></tr>
+                    <tr><th>Frequency (MHz)</th><td>{fmt(freq)}</td></tr>
+                    <tr><th>IPv4 ({WLAN_STA_IFACE})</th><td class="mono">{fmt(info['ip'][WLAN_STA_IFACE])}</td></tr>
+                    <tr><th>Gateway (STA)</th><td class="mono">{fmt(info['gateway_sta'])}</td></tr>
+                </table>
+            </div>
+
+            <div class="card">
+                <h3>Provisioning AP (wlan0)</h3>
+                <table>
+                    <tr><th>IPv4 ({WLAN_AP_IFACE})</th><td class="mono">{fmt(info['ip'][WLAN_AP_IFACE])}</td></tr>
+                    <tr><th>Gateway (AP)</th><td class="mono">{fmt(info['gateway_ap'])}</td></tr>
+                    <tr><th>DNS Servers</th><td class="mono">{", ".join(info['dns']) if info['dns'] else "(n/a)"}</td></tr>
+                </table>
+            </div>
+
+            <div class="card">
+                <h3>App</h3>
+                <table>
+                    <tr><th>Name</th><td>keuka-sensor</td></tr>
+                    <tr><th>Version</th><td>{fmt(info['version'])}</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:1rem">
+            <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.5rem">
+                <strong>Raw JSON</strong>
+                <button onclick="copyJSON()" style="padding:.3rem .6rem;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer">Copy</button>
+                <span id="copynote" class="small muted"></span>
+            </div>
+            <pre id="rawjson" class="small mono" style="white-space:pre-wrap">{json.dumps(info, indent=2)}</pre>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
 
 @app.route('/admin', methods=['GET'])
 @app.route('/admin/<action>', methods=['POST'])
@@ -645,12 +770,6 @@ def duckdns_disable():
 
 # ---------------- Main ----------------
 if __name__ == '__main__':
-    # Try port 80 (production). If lacking privileges, fall back to 5000 (dev/test).
-    try:
-        app.run(host='0.0.0.0', port=80, debug=False, threaded=True)
-    except OSError as e:
-        if getattr(e, 'errno', None) in (13,):  # Permission denied
-            print("Port 80 requires root or CAP_NET_BIND_SERVICE. Falling back to :5000", file=sys.stderr)
-            app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
-        else:
-            raise
+    # Always run on port 5000 for development/testing
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+
