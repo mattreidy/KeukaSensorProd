@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------
 
 import json
-from flask import Blueprint, request, jsonify, redirect, url_for
+from flask import Blueprint, request, jsonify, redirect
 
 from ui import render_page
 from config import WLAN_STA_IFACE, WLAN_AP_IFACE
@@ -21,15 +21,42 @@ from wifi_net import (
 
 admin_bp = Blueprint("admin", __name__)
 
-# -------- redirect: /admin -> /admin/wifi --------
 @admin_bp.route("/admin")
 def admin_index():
-    return redirect(url_for("admin.admin_wifi"), code=302)
+    return redirect("/admin/wifi", code=302)
 
 # -------- HTML page --------
+
 @admin_bp.route("/admin/wifi")
 def admin_wifi():
     body = f"""
+      <style>
+        /* Make form controls clearly visible on mobile & dark mode */
+        form.stack {{ display: block; }}
+        label {{ display: block; margin: .6rem 0; }}
+        input[type="text"], input[type="password"], select {{
+          width: 100%;
+          padding: .5rem .6rem;
+          border: 1px solid #4a4a4a;
+          border-radius: .45rem;
+          background: #fff;     /* light background */
+          color: #111;          /* dark text */
+          outline: none;
+        }}
+
+        /* Nice in dark mode too */
+        @media (prefers-color-scheme: dark) {{
+          input[type="text"], input[type="password"], select {{
+            background: #1f1f1f;
+            color: #f1f1f1;
+            border-color: #666;
+          }}
+          input::placeholder {{ color: #bbb; }}
+        }}
+
+        input::placeholder {{ color: #666; }}
+      </style>
+
       <div class="flex" style="gap:.8rem;align-items:center;margin-bottom:.3rem">
         <h1 style="margin:0">Wi-Fi Setup</h1>
         <span class="muted">STA = {WLAN_STA_IFACE} (LAN), AP = {WLAN_AP_IFACE} (KeukaSensor)</span>
@@ -45,8 +72,12 @@ def admin_wifi():
           <ul id="scanList" style="margin:.5rem 0 1rem 0;padding-left:1rem"></ul>
 
           <form id="connectForm" class="stack" style="max-width:420px">
-            <label>SSID <input id="ssid" name="ssid" required></label>
-            <label>Password (leave blank for open) <input id="psk" name="psk" type="password"></label>
+            <label>SSID
+              <input id="ssid" name="ssid" type="text" required placeholder="Network name">
+            </label>
+            <label>Password (leave blank for open)
+              <input id="psk" name="psk" type="password" placeholder="••••••••">
+            </label>
             <button class="btn" type="submit">Connect (DHCP)</button>
             <div id="connectNote" class="muted"></div>
           </form>
@@ -64,9 +95,15 @@ def admin_wifi():
               </select>
             </label>
             <div id="staticFields" style="display:none">
-              <label>IPv4/CIDR (e.g., 192.168.2.50/24)<input id="ip_cidr" name="ip_cidr"></label>
-              <label>Gateway <input id="router" name="router"></label>
-              <label>DNS (comma separated) <input id="dns_csv" name="dns_csv" placeholder="8.8.8.8,1.1.1.1"></label>
+              <label>IPv4/CIDR (e.g., 192.168.2.50/24)
+                <input id="ip_cidr" name="ip_cidr" type="text" placeholder="192.168.2.50/24">
+              </label>
+              <label>Gateway
+                <input id="router" name="router" type="text" placeholder="192.168.2.1">
+              </label>
+              <label>DNS (comma separated)
+                <input id="dns_csv" name="dns_csv" type="text" placeholder="8.8.8.8,1.1.1.1">
+              </label>
             </div>
             <button class="btn" type="submit">Apply</button>
             <div id="ipNote" class="muted"></div>
@@ -89,7 +126,6 @@ def admin_wifi():
             const li = document.createElement('li');
             li.innerHTML = `<strong>${{n.ssid}}</strong> <span class="muted">(${{n.signal_dbm??"(n/a)"}} dBm @ ${{n.freq_mhz??"(n/a)"}} MHz)</span>`;
             li.style.cursor="pointer";
-            li.title = "Click to fill SSID below";
             li.onclick = () => q('#ssid').value = n.ssid;
             ul.appendChild(li);
           }});
@@ -100,15 +136,23 @@ def admin_wifi():
           const j = await r.json();
           q('#status').textContent = JSON.stringify(j, null, 2);
           q('#curIp').textContent = "STA ip: " + (j.ip['{WLAN_STA_IFACE}'] || "(none)") + "   |   GW: " + (j.gateway_sta || "(none)");
+
+          // Toggle static fields explicitly with 'block' to avoid CSS quirks
           if (j.dhcpcd && j.dhcpcd.mode === "static") {{
             q('#mode').value = "static";
-            q('#staticFields').style.display = "";
+            q('#staticFields').style.display = "block";
             q('#ip_cidr').value = j.dhcpcd.ip || "";
             q('#router').value = j.dhcpcd.router || "";
             q('#dns_csv').value = (j.dhcpcd.dns||[]).join(", ");
           }} else {{
             q('#mode').value = "dhcp";
             q('#staticFields').style.display = "none";
+            // Pre-fill convenience: suggest current lease with /24 if present
+            const cur = j.ip['{WLAN_STA_IFACE}'];
+            if (cur && cur.includes('/')) {{
+              const ipOnly = cur.split('/')[0];
+              q('#ip_cidr').placeholder = ipOnly.replace(/\\d+$/, '50') + "/24";
+            }}
           }}
         }}
 
@@ -118,14 +162,14 @@ def admin_wifi():
             const r = await fetch('/api/wifi/scan', {{cache:'no-store'}});
             const j = await r.json();
             renderScan(j.networks||[]);
-            q('#scanNote').textContent = "Done.";
+            q('#scanNote').textContent = (j.networks && j.networks.length) ? "Done." : "No networks found.";
           }} catch(e) {{
             q('#scanNote').textContent = "Scan failed.";
           }}
         }};
 
         q('#mode').onchange = () => {{
-          q('#staticFields').style.display = (q('#mode').value === "static") ? "" : "none";
+          q('#staticFields').style.display = (q('#mode').value === "static") ? "block" : "none";
         }};
 
         q('#connectForm').onsubmit = async (ev) => {{
@@ -182,6 +226,7 @@ def admin_wifi():
     return render_page("Keuka Sensor – Wi-Fi", body)
 
 # -------- JSON APIs --------
+
 @admin_bp.route("/api/wifi/scan")
 def api_wifi_scan():
     nets = wifi_scan()
@@ -193,7 +238,7 @@ def api_wifi_connect():
     ssid = (data.get("ssid") or "").strip()
     psk  = data.get("psk") or ""
 
-    ok, msg, details = wifi_connect(ssid, psk)  # returns (ok,msg,{"ip":..., "iface":...})
+    ok, msg, details = wifi_connect(ssid, psk)
     status = 200 if ok else 400
     return jsonify({"ok": ok, "message": msg, **details}), status
 
