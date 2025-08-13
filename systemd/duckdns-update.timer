@@ -2,7 +2,6 @@
 Description=Run DuckDNS updater periodically
 
 [Timer]
-# First run shortly after boot, then every 5 minutes
 OnBootSec=2min
 OnUnitActiveSec=5min
 Unit=duckdns-update.service
