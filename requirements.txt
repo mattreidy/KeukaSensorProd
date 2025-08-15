@@ -1,0 +1,47 @@
+#
+# Compatible with both Python 3.9 (Raspberry Pi) and Python 3.13 (dev PC)
+#
+
+blinker==1.9.0
+    # via flask
+click>=8.1.8,<8.2.0
+    # via
+    #   flask
+    #   w1thermsensor
+colorama==0.4.6
+    # via click
+
+gunicorn>=21.0,<22
+
+# Flask: last Py3.9 release vs latest for Py3.10+
+flask==2.3.3; python_version < "3.10"
+flask==3.1.1; python_version >= "3.10"
+
+# itsdangerous: Py3.9 cap
+itsdangerous==2.1.2; python_version < "3.10"
+itsdangerous==2.2.0; python_version >= "3.10"
+
+# jinja2: works for both
+jinja2==3.1.3; python_version < "3.10"
+jinja2==3.1.6; python_version >= "3.10"
+
+# markupsafe: Py3.9 cap
+markupsafe==2.1.5; python_version < "3.10"
+markupsafe==3.0.2; python_version >= "3.10"
+
+# NumPy: last Py3.9 release vs latest for Py3.10+
+numpy==1.26.4; python_version < "3.10"
+numpy==2.2.6; python_version >= "3.10"
+
+# Pi-friendly OpenCV prebuilt wheel
+opencv-python-headless==4.6.0.66; platform_machine == "armv6l" or platform_machine == "armv7l" or platform_machine == "aarch64"
+
+# Newer version for non-Pi environments
+opencv-python==4.12.0.88; platform_machine != "armv6l" and platform_machine != "armv7l" and platform_machine != "aarch64"
+
+w1thermsensor==2.3.0
+    # via -r requirements.in
+
+# werkzeug: Py3.9 cap
+werkzeug==2.3.7; python_version < "3.10"
+werkzeug==3.1.3; python_version >= "3.10"
