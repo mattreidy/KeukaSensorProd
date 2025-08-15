@@ -69,12 +69,25 @@ Estimated 2025 street prices; substitutes OK.
 
 ---
 
-## 4) Electrical wiring (summary)
+## 4) Electrical Wiring (Summary)
 
-- **JSN‑SR04T**: `TRIG → GPIO 23`, `ECHO → GPIO 24 via 1k/2k divider`, `5V`, `GND`.
-- **DS18B20**: `DATA → GPIO 4`, `3.3V`, `GND`, plus **4.7 kΩ pull‑up** from DATA to 3.3 V.
-- **USB webcam** and **USB Wi‑Fi** → Pi USB.
-- Keep grounds common; strain‑relief all cables; add desiccant inside.
+This system uses both a **JSN-SR04T ultrasonic sensor** (with resistor divider) and a **DS18B20 temperature sensor**.  
+Follow these connections to ensure reliable operation:
+
+- **JSN-SR04T** (waterproof ultrasonic):
+  - **TRIG** → GPIO 23
+  - **ECHO** → GPIO 24 via **1 kΩ + 2 kΩ** resistor divider (5 V → 3.3 V)
+  - **VCC** → 5 V
+  - **GND** → Ground
+  - *(Optional)* **0.1 µF** ceramic capacitor across VCC and GND at the sensor for noise suppression
+
+- **DS18B20** (temperature):
+  - **DATA** → GPIO 4
+  - **VCC** → 3.3 V
+  - **GND** → Ground
+  - **4.7 kΩ** pull-up resistor between DATA and 3.3 V
+
+- **USB Wi-Fi** adapter → any free Raspberry Pi USB port
 
 ---
 
