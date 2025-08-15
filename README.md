@@ -46,11 +46,12 @@ Estimated 2025  prices
 | 1   | JSN-SR04T Waterproof Ultrasonic Sensor                                                                   | $10           | Distance measurement |
 | 2   | Resistors (1 kΩ, 2 kΩ)                                                                                   | —           | Voltage divider for ultrasonic ECHO pin |
 | 1   | DS18B20 Temperature Sensor                                                                               | $10           | Temperature measurement |
-| —   | Misc wiring, resistors,                                                                                  | —           |  |
+| 1   | Resistor (4.7 kΩ)                                                                                         | —           | Temperature |
+| —   | Misc wiring and other components                                                                         | $15           |  |
 | 1   | Zulkit Junction Box Waterproof Clear Cover 8.7"x6.7"x4.3"                                                | $30         |  |
 
 
-**Typical build total:** **≈ $210**.
+**Typical build total:** **≈ $200**.
 
 ---
 
