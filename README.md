@@ -54,7 +54,21 @@ Estimated 2025 street prices; substitutes OK.
 |17| Desiccant + silicone sealant | Moisture + sealing | 1 | $4 | $4 |
 |18| Zip ties + adhesive anchors | Strain relief | 1 | $3 | $3 |
 
-**Typical build total:** **≈ $188** (range: **$155–$199**).
+### 📦 Bill of Materials (BOM)
+
+| Qty | Item                                                                                                     | Price (USD) | Notes |
+|-----|----------------------------------------------------------------------------------------------------------|-------------|-------|
+| 1   | Raspberry Pi 3B+                                                                                         | $50         | Main controller board |
+| 1   | HCDC RPi GPIO Status LED & Terminal Block Breakout Board HAT                                             | $20         | Simplifies wiring and provides GPIO status LEDs |
+| 1   | Raspberry Pi Mini Camera Video Module (OV5647, 5 MP, 1080p)                                              | $10         | CSI ribbon connection for live video feed |
+| 1   | AC600 Mbps Dual Band USB Wi-Fi Adapter (2.4/5 GHz) with Antenna                                          | $15         | Improved wireless connectivity |
+| 1   | JSN-SR04T Waterproof Ultrasonic Sensor                                                                   | $10           | Distance measurement |
+| 2   | Resistors (1 kΩ, 2 kΩ)                                                                                   | —           | Voltage divider for ultrasonic ECHO pin |
+| 1   | DS18B20 Temperature Sensor                                                                               | $10           | Temperature measurement |
+| —   | Misc wiring, resistors,                                                                                  | —           |  |
+
+
+**Typical build total:** **≈ $210**.
 
 ---
 
