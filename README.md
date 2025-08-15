@@ -31,28 +31,9 @@ Default admin credentials (change in systemd env): **`admin/password`**.
 
 ## 2) Consolidated Bill of Materials (BoM)
 
-Estimated 2025 street prices; substitutes OK.
+Estimated 2025  prices
 
-| # | Item | Example / Notes | Qty | Est. Unit | Subtotal |
-|---|------|------------------|----:|----------:|---------:|
-| 1 | Raspberry Pi 3A+ | Full‑size USB, onboard Wi‑Fi | 1 | **$45** | **$45** |
-| 2 | microSD 32 GB (A1) | OS & app | 1 | $7 | $7 |
-| 3 | 5V 3A PSU + micro‑USB cable | Outdoor‑rated if possible | 1 | $10 | $10 |
-| 4 | USB UVC webcam (720p) | MJPEG capable | 1 | $12 | $12 |
-| 5 | JSN‑SR04T‑2.0/3.0 ultrasonic | Waterproof head + controller PCB | 1 | $9 | $9 |
-| 6 | DS18B20 waterproof probe | 3‑wire, 1‑Wire, 3–10 m | 1 | $8 | $8 |
-| 7 | IP66/68 enclosure, clear lid (~7×5×2 in) | Hammond 1554 series or equiv. | 1 | $25 | $25 |
-| 8 | PG7 cable gland | DS18B20 lead | 1 | $2 | $2 |
-| 9 | PG9 cable gland | 5 V power | 1 | $3 | $3 |
-|10| RP‑SMA bulkhead (IP67) | Antenna feed‑through | 1 | $5 | $5 |
-|11| RG316 RP‑SMA pigtail (20–30 cm) | USB adapter ↔ bulkhead | 1 | $5 | $5 |
-|12| 2.4 GHz omni antenna (5–9 dBi) | Outdoor‑rated preferred | 1 | $10 | $10 |
-|13| USB 2.4 GHz Wi‑Fi adapter (RP‑SMA) | Panda PAU06 / Alfa AWUS036NH | 1 | $22 | $22 |
-|14| Mounting L‑bracket + SS clamps | Post/dock mounting | 1 | $10 | $10 |
-|15| Standoffs/screws/spacers kit | For Pi & JSN board | 1 | $5 | $5 |
-|16| Proto strip + resistors + wire | 1 kΩ / 2 kΩ divider, jumpers | 1 | $3 | $3 |
-|17| Desiccant + silicone sealant | Moisture + sealing | 1 | $4 | $4 |
-|18| Zip ties + adhesive anchors | Strain relief | 1 | $3 | $3 |
+
 
 ### 📦 Bill of Materials (BOM)
 
@@ -66,6 +47,7 @@ Estimated 2025 street prices; substitutes OK.
 | 2   | Resistors (1 kΩ, 2 kΩ)                                                                                   | —           | Voltage divider for ultrasonic ECHO pin |
 | 1   | DS18B20 Temperature Sensor                                                                               | $10           | Temperature measurement |
 | —   | Misc wiring, resistors,                                                                                  | —           |  |
+| 1   | Zulkit Junction Box Waterproof Clear Cover 8.7"x6.7"x4.3"                                                | $30         |  |
 
 
 **Typical build total:** **≈ $210**.
