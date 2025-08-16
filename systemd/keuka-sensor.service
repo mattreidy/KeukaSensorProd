@@ -10,6 +10,10 @@ Type=simple
 NoNewPrivileges=no
 RestrictSUIDSGID=no
 Environment=PYTHONPATH=/usr/lib/python3/dist-packages
+Environment=KS_CAMERA=picamera2
+Environment=OPENCV_LOG_LEVEL=ERROR
+Environment=CV_LOG_LEVEL=ERROR
+
 
 User=pi
 Group=pi

@@ -2,13 +2,13 @@
 # -----------------------------------------------------------------------------
 # Webcam routes:
 #   /webcam   - simple page that shows the MJPEG stream
-#   /stream   - multipart/x-mixed-replace MJPEG stream (requires OpenCV)
+#   /stream   - multipart/x-mixed-replace MJPEG stream (backend-agnostic)
 #   /snapshot - single JPEG frame for use as a lightweight thumbnail
 # -----------------------------------------------------------------------------
 
 import time
 from flask import Blueprint, Response, abort
-from camera import camera, cv2  # cv2 may be None; routes handle that
+from camera import camera  # backend-agnostic; produces JPEG bytes
 from ui import render_page
 
 webcam_bp = Blueprint("webcam", __name__)
@@ -21,36 +21,51 @@ def webcam_page():
         <p class="muted">Live MJPEG stream.</p>
         <img src="/stream" alt="Webcam stream" style="max-width:100%;height:auto;border-radius:12px;border:1px solid var(--border)">
       </div>
-      <p class="muted">If the image does not load, OpenCV may be unavailable.</p>
+      <p class="muted">If the image does not load, check service logs for camera initialization errors.</p>
     """
     return render_page("Keuka Sensor – Webcam", body)
 
 @webcam_bp.route("/stream")
 def stream_mjpeg():
-    if cv2 is None:
-        abort(503, 'Webcam not available (OpenCV missing).')
+    # Ensure background capture thread is running
     if not camera.running:
-        camera.start()
+        try:
+            camera.start()
+        except Exception:
+            pass
+
+    # Warm-up: wait briefly for first frame
+    t0 = time.time()
+    while camera.get_jpeg() is None and time.time() - t0 < 3.0:
+        time.sleep(0.05)
+
+    if camera.get_jpeg() is None:
+        abort(503, "No camera frames available.")
 
     def gen():
-        boundary = 'frame'
+        boundary = b"frame"
+        # Note: camera.get_jpeg() yields already-encoded JPEG bytes.
         while True:
             frm = camera.get_jpeg()
             if frm is None:
                 time.sleep(0.05)
                 continue
-            # Each chunk is: boundary + headers + jpeg bytes + CRLF
-            yield (b"--" + boundary.encode() + b"\r\n"
-                   b"Content-Type: image/jpeg\r\n\r\n" + frm + b"\r\n")
+            yield (
+                b"--" + boundary + b"\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Cache-Control: no-cache\r\n\r\n" +
+                frm + b"\r\n"
+            )
 
-    return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(gen(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 @webcam_bp.route("/snapshot")
 def snapshot_jpeg():
-    if cv2 is None:
-        abort(503, 'Webcam not available (OpenCV missing).')
     if not camera.running:
-        camera.start()
+        try:
+            camera.start()
+        except Exception:
+            pass
 
     # Wait briefly for a frame
     t0 = time.time()
@@ -60,11 +75,13 @@ def snapshot_jpeg():
         if frm:
             break
         time.sleep(0.05)
+
     if not frm:
-        abort(503, 'No frame')
-    resp = Response(frm, mimetype='image/jpeg')
-    # Cache-busting headers (so the health page can append ?cb=time)
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
+        abort(503, "No frame")
+
+    resp = Response(frm, mimetype="image/jpeg")
+    # Cache-busting headers
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
     return resp
