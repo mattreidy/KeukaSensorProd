@@ -18,23 +18,19 @@ from typing import List, Optional, Tuple
 
 from version import get_local_commit, get_remote_commit, short_sha
 
-# -------- Configuration (env-driven with safe defaults) --------
 REPO_URL = os.environ.get("KEUKA_REPO_URL", "https://github.com/mattreidy/KeukaSensorProd.git")
 APP_ROOT = os.environ.get("KEUKA_APP_ROOT", "/home/pi/KeukaSensorProd")
 SERVICE_NAME = os.environ.get("KEUKA_SERVICE_NAME", "keuka-sensor")
 UPDATE_SCRIPT = os.environ.get("KEUKA_UPDATE_SCRIPT", os.path.join(APP_ROOT, "scripts", "update_code_only.sh"))
 SUDO = os.environ.get("KEUKA_SUDO", "sudo")  # set "" to disable sudo
 
-# Log file (persist across restarts)
 LOG_DIR = os.path.join(APP_ROOT, "logs")
 LOG_FILE = os.path.join(LOG_DIR, "updater.log")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Marker written at the start of each attempt (used to extract only the last run)
 RUN_MARK = "----"
 RUN_HEADER_SUFFIX = "(new run) starting..."
 
-# -------- States --------
 _STATE_IDLE = "idle"
 _STATE_RUNNING = "running"
 _STATE_SUCCESS = "success"
@@ -51,17 +47,11 @@ def _append_log_file(line: str) -> None:
 
 
 def _read_last_run_from_file(max_lines: int = 4000) -> List[str]:
-    """
-    Return ONLY the lines from the most recent attempt.
-    We find the last RUN_MARK or last header containing RUN_HEADER_SUFFIX,
-    and return from that point onward.
-    """
     try:
         if not os.path.isfile(LOG_FILE):
             return []
         with open(LOG_FILE, "r", encoding="utf-8") as f:
             lines = f.read().splitlines()
-        # Trim first to reduce scan cost
         if len(lines) > max_lines:
             lines = lines[-max_lines:]
 
@@ -84,12 +74,13 @@ class UpdateManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._state: str = _STATE_IDLE
-        self._logs: List[str] = []  # in-memory buffer for the CURRENT attempt only
+        self._logs: List[str] = []
         self._thread: Optional[threading.Thread] = None
         self._started_at: Optional[float] = None
         self._finished_at: Optional[float] = None
         self._tmpdir: Optional[str] = None
         self._cancel_requested: bool = False
+        self._sanitized_script_path: Optional[str] = None
 
     def state(self) -> str:
         with self._lock:
@@ -99,7 +90,6 @@ class UpdateManager:
         with self._lock:
             if self._logs:
                 return self._state, list(self._logs), self._started_at, self._finished_at
-        # If no current in-memory logs (e.g., after a service restart), show only the last attempt from disk
         return self._state, _read_last_run_from_file(), self._started_at, self._finished_at
 
     def start(self) -> bool:
@@ -111,16 +101,12 @@ class UpdateManager:
             self._started_at = time.time()
             self._finished_at = None
             self._cancel_requested = False
+            self._sanitized_script_path = None
 
-            # Per-run header goes to BOTH memory and the persistent file
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             header = f"[{ts}] {RUN_HEADER_SUFFIX}"
-
-            # Write a simple run separator + header to the log file
             _append_log_file(RUN_MARK)
             _append_log_file(header)
-
-            # Mirror the header in memory so the UI shows it immediately
             self._logs.append(RUN_MARK)
             self._logs.append(header)
 
@@ -152,11 +138,44 @@ class UpdateManager:
         with self._lock:
             return self._cancel_requested
 
+    def _prepare_script_for_exec(self, script_path: str, work_tmpdir: str) -> str:
+        """Run via /bin/bash; sanitize CRLF if needed."""
+        try:
+            with open(script_path, "rb") as f:
+                data = f.read()
+        except Exception as e:
+            self._log(f"ERROR: cannot read UPDATE_SCRIPT: {script_path} ({e})")
+            return script_path
+
+        needs_sanitize = b"\r\n" in data or b"\r" in data
+        if needs_sanitize:
+            try:
+                fixed = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+                out_path = os.path.join(work_tmpdir, "update_code_only.sanitized.sh")
+                with open(out_path, "wb") as out:
+                    out.write(fixed)
+                os.chmod(out_path, 0o755)
+                with self._lock:
+                    self._sanitized_script_path = out_path
+                self._log(f"NOTICE: UPDATE_SCRIPT appears to have CRLF; using sanitized temp copy: {out_path}")
+                return out_path
+            except Exception as e:
+                self._log(f"WARNING: failed to create sanitized copy ({e}); proceeding with original script).")
+
+        try:
+            st = os.stat(script_path)
+            if not (st.st_mode & 0o111):
+                os.chmod(script_path, st.st_mode | 0o111)
+                self._log("NOTICE: UPDATE_SCRIPT did not have execute bit; added +x.")
+        except Exception:
+            pass
+
+        return script_path
+
     def _run(self) -> None:
         ok = False
         tmpdir = None
         try:
-            # Optional: verify sudo can run non-interactively (prevents silent failures)
             if SUDO.strip():
                 rc_chk, _ = self._run_cmd([SUDO, "-n", "true"])
                 if rc_chk != 0:
@@ -169,7 +188,6 @@ class UpdateManager:
             self._log(f"Local commit before: {short_sha(local_before)}")
             self._log(f"Remote HEAD commit: {short_sha(remote_head)}")
 
-            # No-op if already up-to-date
             if local_before and remote_head and local_before == remote_head:
                 self._log("Already up-to-date; skipping apply.")
                 ok = True
@@ -198,7 +216,6 @@ class UpdateManager:
                 self._finish(False)
                 return
 
-            # Shallow clone repo
             self._log(f"Cloning repo (shallow): {REPO_URL}")
             rc, out = self._run_cmd(["git", "clone", "--depth", "1", REPO_URL, repo_dir], cwd=tmpdir)
             self._log(out)
@@ -212,7 +229,6 @@ class UpdateManager:
                 self._finish(False)
                 return
 
-            # Determine the exact commit we are deploying from the clone
             rc, head_sha = self._run_cmd(["git", "-C", repo_dir, "rev-parse", "HEAD"], cwd=tmpdir)
             head_sha = (head_sha.strip().splitlines()[-1] if head_sha else "").strip()
             if rc != 0 or not head_sha:
@@ -221,7 +237,6 @@ class UpdateManager:
                 return
             self._log(f"Cloned commit: {short_sha(head_sha)}")
 
-            # Stage only keuka/
             repo_keuka = os.path.join(repo_dir, "keuka")
             if not os.path.isdir(repo_keuka):
                 self._log("ERROR: 'keuka/' folder not found in cloned repo.")
@@ -237,14 +252,16 @@ class UpdateManager:
                 self._finish(False)
                 return
 
-            # Execute the replacement script via CLI args (no env reliance)
             self._log("Executing replacement script...")
+            script_to_run = self._prepare_script_for_exec(UPDATE_SCRIPT, tmpdir)
+
             cmd = [
-                UPDATE_SCRIPT,
+                "/bin/bash",
+                script_to_run,
                 "--stage", stage_dir,
                 "--root", APP_ROOT,
                 "--service", SERVICE_NAME,
-                "--commit", head_sha,   # pass the exact commit we deploy
+                "--commit", head_sha,
             ]
             if SUDO.strip():
                 cmd = [SUDO, "-n", "--preserve-env=STAGE_DIR,APP_ROOT,SERVICE_NAME"] + cmd
@@ -261,10 +278,8 @@ class UpdateManager:
                 self._finish(False)
                 return
 
-            # Version context after update (apply may still be finishing if detached)
-            local_after = get_local_commit(APP_ROOT)
-            self._log(f"Local commit after: {short_sha(local_after)}")
-            self._log("Update completed successfully.")
+            self._log("Apply detached. The GUI may show a 'pending' commit until the service restarts.")
+            self._log("Update requested for commit: " + short_sha(head_sha))
             ok = True
         except Exception as e:
             self._log(f"ERROR: Unhandled exception: {e}")
@@ -302,8 +317,5 @@ class UpdateManager:
             return 1, f"Command failed: {e}"
 
 
-# Singleton instance used by routes
 updater = UpdateManager()
-
-# Public constants for routes
 __all__ = ["updater", "REPO_URL", "APP_ROOT", "SERVICE_NAME", "LOG_FILE"]

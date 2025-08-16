@@ -1,11 +1,6 @@
 # keuka/version.py
 # -----------------
-# Helpers to identify the local (running) commit and the latest remote commit.
-# Local version is resolved in this order:
-#   1) <APP_ROOT>/keuka/.keuka_commit
-#   2) <APP_ROOT>/.keuka_commit
-#   3) git rev-parse HEAD at <APP_ROOT>
-# The function also returns which source was used so the UI can display it.
+# Helpers for local/remote commit reporting and pretty printing.
 
 from __future__ import annotations
 
@@ -13,76 +8,86 @@ import os
 import subprocess
 from typing import Optional, Tuple
 
-
-def _run(cmd, cwd=None, env=None) -> Tuple[int, str]:
-    try:
-        out = subprocess.check_output(cmd, cwd=cwd, env=env, stderr=subprocess.STDOUT, text=True)
-        return 0, out.strip()
-    except subprocess.CalledProcessError as e:
-        return e.returncode, (e.output or "").strip()
-    except FileNotFoundError:
-        return 127, "command not found"
-    except Exception as e:
-        return 1, str(e)
-
-
 def _read_file(path: str) -> Optional[str]:
     try:
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                v = f.read().strip()
-                if v:
-                    return v
+        with open(path, "r", encoding="utf-8") as f:
+            s = f.read().strip()
+            return s if s else None
     except Exception:
-        pass
-    return None
-
-
-def get_local_commit_with_source(app_root: str) -> Tuple[Optional[str], str]:
-    """
-    Returns (sha, source), where source in {"marker-keuka","marker-root","git","none"}.
-    """
-    # 1) marker inside keuka/
-    m1 = os.path.join(app_root, "keuka", ".keuka_commit")
-    sha = _read_file(m1)
-    if sha:
-        return sha, "marker-keuka"
-
-    # 2) marker at repo root
-    m2 = os.path.join(app_root, ".keuka_commit")
-    sha = _read_file(m2)
-    if sha:
-        return sha, "marker-root"
-
-    # 3) git HEAD
-    rc, out = _run(["git", "rev-parse", "HEAD"], cwd=app_root)
-    if rc == 0 and out and len(out) >= 7:
-        return out.strip(), "git"
-
-    # final fallback
-    return None, "none"
-
-
-def get_local_commit(app_root: str) -> Optional[str]:
-    sha, _ = get_local_commit_with_source(app_root)
-    return sha
-
-
-def get_remote_commit(repo_url: str) -> Optional[str]:
-    """
-    Returns the full 40-char SHA of the remote's default HEAD.
-    Uses: git ls-remote <url> HEAD
-    """
-    rc, out = _run(["git", "ls-remote", repo_url, "HEAD"])
-    # Output looks like: "<sha>\tHEAD"
-    if rc == 0 and out:
-        line = out.splitlines()[0].strip()
-        if line:
-            sha = line.split()[0]
-            if len(sha) >= 7:
-                return sha
-    return None
-
+        return None
 
 def short_sha(sha: Optional[str]) -> str:
-    return (sha[:7] if sha else "-")
+    return (sha or "")[:7] if sha else "unknown"
+
+def get_remote_commit(repo_url: str) -> Optional[str]:
+    """Fetch remote HEAD SHA without cloning the whole repo."""
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-remote", repo_url, "HEAD"],
+            stderr=subprocess.STDOUT,
+            text=True,
+        ).strip()
+        if not out:
+            return None
+        sha = out.split()[0]
+        return sha if sha else None
+    except Exception:
+        return None
+
+def get_local_commit(app_root: str) -> Optional[str]:
+    """
+    Returns the *effective* local commit for UI comparison.
+    Priority:
+      1) pending marker (.keuka_commit.next) if present -> treat as in-progress deploy target
+      2) final marker in keuka/.keuka_commit
+      3) final marker in .keuka_commit
+      4) git HEAD of the worktree at app_root
+    """
+    pending = _read_file(os.path.join(app_root, ".keuka_commit.next"))
+    if pending:
+        return pending
+
+    mk_keuka = _read_file(os.path.join(app_root, "keuka", ".keuka_commit"))
+    if mk_keuka:
+        return mk_keuka
+
+    mk_root = _read_file(os.path.join(app_root, ".keuka_commit"))
+    if mk_root:
+        return mk_root
+
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", app_root, "rev-parse", "HEAD"],
+            stderr=subprocess.STDOUT,
+            text=True,
+        ).strip()
+        return out if out else None
+    except Exception:
+        return None
+
+def get_local_commit_with_source(app_root: str) -> Tuple[Optional[str], str]:
+    """Like get_local_commit but also returns a source tag for UI display."""
+    p = os.path.join(app_root, ".keuka_commit.next")
+    v = _read_file(p)
+    if v:
+        return v, "marker-pending"
+
+    p = os.path.join(app_root, "keuka", ".keuka_commit")
+    v = _read_file(p)
+    if v:
+        return v, "marker-keuka"
+
+    p = os.path.join(app_root, ".keuka_commit")
+    v = _read_file(p)
+    if v:
+        return v, "marker-root"
+
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", app_root, "rev-parse", "HEAD"],
+            stderr=subprocess.STDOUT,
+            text=True,
+        ).strip()
+        return (out if out else None), "git"
+    except Exception:
+        return None, "unknown"
