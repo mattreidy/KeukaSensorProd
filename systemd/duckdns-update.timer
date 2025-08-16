@@ -1,11 +1,11 @@
 [Unit]
-Description=Run DuckDNS updater periodically
+Description=Run DuckDNS update every 5 minutes
 
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=5min
+AccuracySec=1min
 Unit=duckdns-update.service
-AccuracySec=30s
 Persistent=true
 
 [Install]
