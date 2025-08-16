@@ -14,6 +14,8 @@ from routes_root import root_bp
 from routes_webcam import webcam_bp
 from routes_admin import admin_bp
 from routes_health import health_bp
+from routes_duckdns import duckdns_bp
+
 
 def create_app() -> Flask:
     """
@@ -27,6 +29,7 @@ def create_app() -> Flask:
     app.register_blueprint(webcam_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(health_bp)
+    app.register_blueprint(duckdns_bp)
 
     # You can stash global config if desired
     app.config["VERSION"] = VERSION
