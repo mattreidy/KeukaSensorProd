@@ -13,6 +13,11 @@
 #  - /admin/start_update  starts code-only update
 #  - /admin/cancel_update cancels an in-flight update
 #  - /admin/status        updater state + ONLY last attempt logs
+#
+# NOTE: This file enforces HTTP Basic Auth for:
+#   * /admin/**
+#   * /api/duckdns/**
+# Credentials come from config.ADMIN_USER / config.ADMIN_PASS (env: KS_ADMIN_USER / KS_ADMIN_PASS).
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from datetime import datetime, timezone
 from urllib.request import urlopen
 from flask import Blueprint, request, jsonify, redirect, Response
 from ui import render_page
-from config import WLAN_STA_IFACE, WLAN_AP_IFACE
+from config import WLAN_STA_IFACE, WLAN_AP_IFACE, ADMIN_USER, ADMIN_PASS
 from wifi_net import (
     wifi_scan, wifi_connect, wifi_status_sta,
     ip_addr4, gw4, dns_servers, dhcpcd_current_mode, apply_network,
@@ -37,6 +42,48 @@ from version import get_local_commit_with_source, get_remote_commit, short_sha
 WAN_TRACK = Path(APP_ROOT) / "wan_ip.json"
 
 admin_bp = Blueprint("admin", __name__)
+
+# ---- BASIC AUTH GUARD --------------------------------------------------------
+
+def _unauthorized() -> Response:
+    """Return a 401 with WWW-Authenticate so browsers prompt for creds."""
+    return Response(
+        "Authentication required.\n",
+        401,
+        {
+            "WWW-Authenticate": 'Basic realm="Keuka Admin", charset="UTF-8"',
+            "Content-Type": "text/plain; charset=utf-8",
+        },
+    )
+
+def _is_admin_path(path: str) -> bool:
+    return path.startswith("/admin")
+
+def _is_duckdns_api(path: str) -> bool:
+    # Your Admin page JS calls /api/duckdns/status, /api/duckdns/save, /api/duckdns/run, /api/duckdns/timer
+    return path.startswith("/api/duckdns")
+
+@admin_bp.before_app_request
+def _protect_admin_and_duckdns():
+    """
+    Enforce HTTP Basic Auth for /admin/** and /api/duckdns/** using ADMIN_USER/ADMIN_PASS.
+    Leaves other APIs (e.g., /api/wifi/*, /api/wanip) public as before.
+    """
+    path = request.path or ""
+    if not (_is_admin_path(path) or _is_duckdns_api(path)):
+        return  # not protected
+
+    # If creds aren't configured, fail closed.
+    if not (ADMIN_USER and ADMIN_PASS):
+        return _unauthorized()
+
+    auth = request.authorization
+    if not auth or auth.type.lower() != "basic":
+        return _unauthorized()
+
+    if auth.username != ADMIN_USER or auth.password != ADMIN_PASS:
+        return _unauthorized()
+    # otherwise OK — request continues
 
 
 @admin_bp.route("/admin")
