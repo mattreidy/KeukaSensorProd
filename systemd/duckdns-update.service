@@ -7,13 +7,24 @@ After=network-online.target
 Type=oneshot
 User=pi
 Group=pi
-# Optional env overrides (DUCKDNS_CONF/LOG/IPV6/CURL) in /etc/default/duckdns
-EnvironmentFile=-/etc/default/duckdns
 WorkingDirectory=/home/pi/KeukaSensorProd
-# IMPORTANT: run with Bash (avoids sh option incompatibilities)
+
+# Explicit environment so it matches your successful manual run
+Environment=DUCKDNS_CONF=/opt/keuka-sensor/duckdns.conf
+Environment=DUCKDNS_LOG=/home/pi/KeukaSensorProd/logs/duckdns_last.txt
+Environment=CURL=/usr/bin/curl
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/home/pi
+
+# Run with Bash explicitly
 ExecStart=/usr/bin/env bash /home/pi/KeukaSensorProd/scripts/duckdns_update.sh
-# Treat exit code 1 (DuckDNS KO) as SUCCESS so the unit doesn't "fail"
+
+# Treat remote KO (exit 1) as success so the unit doesn't look failed
 SuccessExitStatus=1
+
+# Send stdout/stderr to the journal for easier debugging
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

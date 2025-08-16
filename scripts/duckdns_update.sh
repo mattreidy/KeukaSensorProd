@@ -4,7 +4,7 @@
 # DuckDNS updater with production niceties:
 # - Bash strict mode.
 # - curl/wget fallback (or override via $CURL).
-# - Simple lock to avoid overlapping runs.
+# - Simple lock to avoid overlapping runs (in a pi-writable dir).
 # - CRLF-safe config parsing.
 # - Optional IPv6 update via $DUCKDNS_IPV6=true.
 # - Env overrides for CONF/LOG via $DUCKDNS_CONF/$DUCKDNS_LOG.
@@ -16,12 +16,9 @@
 #
 # Default search order for config/log (overridden by env):
 #   1) $DUCKDNS_CONF / $DUCKDNS_LOG if set
-#   2) /opt/keuka-sensor/duckdns.conf (and duckdns_last.txt) if present
-#   3) /home/pi/KeukaSensorProd/keuka/duckdns.conf (and duckdns_last.txt)
-#
-# Config file format:
-#   token=YOUR_DUCKDNS_TOKEN
-#   domains=sub1,sub2
+#   2) /opt/keuka-sensor/duckdns.conf
+#   3) /home/pi/KeukaSensorProd/keuka/duckdns.conf
+#   Log fallback default: /home/pi/KeukaSensorProd/logs/duckdns_last.txt
 
 set -Eeuo pipefail
 
@@ -51,26 +48,37 @@ choose_log() {
   if [[ -f "/home/pi/KeukaSensorProd/keuka/duckdns_last.txt" ]]; then
     printf '%s' "/home/pi/KeukaSensorProd/keuka/duckdns_last.txt"; return
   fi
-  printf '%s' "/opt/keuka-sensor/duckdns_last.txt"
+  printf '%s' "/home/pi/KeukaSensorProd/logs/duckdns_last.txt"
 }
 
 CONF="$(choose_conf)"
 LOG="$(choose_log)"
-LOCKDIR="$(dirname "$CONF")/.duckdns.lock"
+
+# Lock base MUST be writable by 'pi'
+LOCKBASE="${DUCKDNS_LOCKBASE:-/home/pi/KeukaSensorProd/logs}"
+mkdir -p "${LOCKBASE}"
+LOCKDIR="${LOCKBASE}/.duckdns.lock"
 
 # ---- tiny lock ---------------------------------------------------------------
-mkdir -p "$(dirname "$LOCKDIR")"
-if ! mkdir "$LOCKDIR" 2>/dev/null; then
+if ! mkdir "${LOCKDIR}" 2>/dev/null; then
   # Another run is active; don't overlap
   exit 0
 fi
-cleanup() { rmdir "$LOCKDIR" 2>/dev/null || true; }
+cleanup() { rmdir "${LOCKDIR}" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
+
+# ---- ensure log path exists --------------------------------------------------
+mkdir -p "$(dirname "$LOG")" || true
+# don’t fail if touch/log creation fails; we’ll still try to run
+touch "$LOG" 2>/dev/null || true
 
 # ---- logging -----------------------------------------------------------------
 log_line() {
-  printf "%s %s\n" "$(timestamp)" "$*" >> "$LOG"
+  printf "%s %s\n" "$(timestamp)" "$*" >> "$LOG" 2>/dev/null || true
 }
+
+log_line "[duckdns] using CONF=${CONF}"
+log_line "[duckdns] using LOG=${LOG}"
 
 # ---- http client -------------------------------------------------------------
 find_http_client() {
@@ -121,8 +129,6 @@ fi
 # env overrides (support lower-case for compatibility)
 [[ -n "${token:-}"   ]] && TOKEN="$token"
 [[ -n "${domains:-}" ]] && DOMAINS="$domains"
-
-mkdir -p "$(dirname "$LOG")"
 
 if [[ -z "$TOKEN" || -z "$DOMAINS" ]]; then
   log_line "[duckdns] missing token/domains ($CONF)"
