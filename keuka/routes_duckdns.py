@@ -1,10 +1,10 @@
-# keuka/routes_duckdns.py
 # -----------------------------------------------------------------------------
 # DuckDNS admin page + JSON API (Flask Blueprint)
 # - Stores token & subdomain list in keuka/duckdns.conf (same file your config.py points to)
 # - Triggers the existing duckdns-update.service
 # - Controls the existing duckdns-update.timer
 # - Shows last update log from keuka/duckdns_last.txt
+# - Enhanced health: next run, last result, service SubState/ExecMainStatus/start/exit
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import html
 import json
 import re
 import subprocess
+from typing import Dict, Any
 
 from config import (
     ADMIN_USER, ADMIN_PASS,
@@ -80,7 +81,6 @@ def _write_conf(domains: str, token: str) -> None:
     parts = [p.strip() for p in (domains or "").split(",") if p.strip()]
     clean = []
     for p in parts:
-        # allow user to paste full host like foo.duckdns.org; store just "foo"
         if p.endswith(".duckdns.org"):
             p = p[:-len(".duckdns.org")]
         clean.append(p)
@@ -88,13 +88,13 @@ def _write_conf(domains: str, token: str) -> None:
     # root-owned secret with 0600
     tmp = CONF.with_suffix(".tmp")
     tmp.write_text(content)
-    _sh(["sudo", "chown", "root:root", str(tmp)])
-    _sh(["sudo", "chmod", "600", str(tmp)])
-    _sh(["sudo", "mv", str(tmp), str(CONF)])
+    _sh(["sudo", "-n", "chown", "root:root", str(tmp)])
+    _sh(["sudo", "-n", "chmod", "600", str(tmp)])
+    _sh(["sudo", "-n", "mv", str(tmp), str(CONF)])
 
 def _systemctl(args: str) -> tuple[int, str]:
     # -n prevents prompting for password; make sure 'pi' can sudo systemctl without password for these units.
-    return _sh(f"sudo -n systemctl {args}", timeout=20)
+    return _sh(f"sudo -n systemctl {args} --no-pager", timeout=20)
 
 def _unit_active(name: str) -> bool:
     rc, _ = _systemctl(f"is-active {name}")
@@ -110,62 +110,99 @@ def _last_update() -> dict:
         if LAST.exists():
             txt = LAST.read_text(errors="replace")
             data["text"] = txt[-4000:]  # last ~4k chars
-            # Try to extract an ISO timestamp if present in your log lines
-            m = re.search(r"(\d{4}-\d{2}-\d{2}T[0-9:+-]{5,})", txt)
+            m = re.search(r"(\\d{4}-\\d{2}-\\d{2}T[0-9:+-]{5,})", txt)
             data["when"] = m.group(1) if m else None
     except Exception:
         pass
     return data
 
+# ---- Option C helpers --------------------------------------------------------
 
-# ----------------------- HTML page -----------------------
+def _parse_systemd_show(text: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for line in text.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip()
+    return out
 
-@duckdns_bp.route("/admin/duckdns", methods=["GET"])
-def admin_duckdns():
-    if not _require_admin(request):
-        return Response(
-            "Unauthorized",
-            401,
-            {"WWW-Authenticate": 'Basic realm="Keuka Admin"'}
-        )
+def _service_details() -> Dict[str, Any]:
+    rc, out = _systemctl("show {} -p SubState -p ExecMainStatus -p ExecMainStartTimestamp -p ExecMainExitTimestamp".format(SERVICE))
+    if rc != 0 or not out:
+        return {}
+    m = _parse_systemd_show(out)
+    return {
+        "service_substate": m.get("SubState"),
+        "service_exec_status": (int(m["ExecMainStatus"]) if m.get("ExecMainStatus", "").isdigit() else None),
+        "service_started_at": m.get("ExecMainStartTimestamp"),
+        "service_exited_at": m.get("ExecMainExitTimestamp"),
+    }
 
-    cfg = _read_conf()
-    dom = html.escape(cfg.get("domains", ""))
-    tok = html.escape(cfg.get("token", ""))
+def _timer_details() -> Dict[str, Any]:
+    rc, out = _systemctl("show {} -p NextElapseUSecRealtime -p LastTriggerUSecRealtime".format(TIMER))
+    if rc != 0 or not out:
+        return {"timer_next": None, "timer_last_trigger": None}
+    m = _parse_systemd_show(out)
+    return {
+        "timer_next": m.get("NextElapseUSecRealtime") or None,
+        "timer_last_trigger": m.get("LastTriggerUSecRealtime") or None,
+    }
 
-    html_page = f"""<!doctype html>
+def _last_result() -> Dict[str, Any]:
+    """
+    Parse the last ' [duckdns] v4 ' line from LAST and map to OK/KO.
+    Returns {'last_result':'OK'|'KO'|None, 'last_result_line':str|None}
+    """
+    try:
+        if not LAST.exists():
+            return {"last_result": None, "last_result_line": None}
+        txt = LAST.read_text(errors="replace")
+        lines = [ln for ln in txt.splitlines() if " [duckdns] v4 " in ln]
+        if not lines:
+            return {"last_result": None, "last_result_line": None}
+        last_line = lines[-1]
+        status = "OK" if (" v4 OK " in last_line or last_line.rstrip().endswith(" v4 OK")) else "KO"
+        return {"last_result": status, "last_result_line": last_line[-400:]}
+    except Exception:
+        return {"last_result": None, "last_result_line": None}
+
+
+# ----------------------- HTML template (no f-strings) ------------------------
+
+_DUCKDNS_HTML_TMPL = r"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <title>KeukaSensor • DuckDNS</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 18px; }}
-  .card {{ max-width: 860px; border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 0 auto; }}
-  .row {{ display: flex; gap: 12px; flex-wrap: wrap; }}
-  .row > div {{ flex: 1 1 260px; }}
-  label {{ display:block; font-weight:600; margin: 8px 0 4px; }}
-  input[type=text], input[type=password] {{ width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; }}
-  button {{ padding:8px 14px; border:1px solid #888; border-radius:6px; cursor:pointer; background:#f5f5f5; }}
-  button.primary {{ background:#1e90ff; color:#fff; border-color:#1e90ff; }}
-  .muted {{ color:#666; font-size: 0.9em; }}
-  pre {{ background:#fafafa; border:1px solid #eee; border-radius:6px; padding:10px; overflow:auto; max-height: 360px; }}
-  .ok {{ color:#0a7d00; font-weight:600; }}
-  .bad {{ color:#b00020; font-weight:600; }}
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 18px; }
+  .card { max-width: 980px; border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 0 auto; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 260px; }
+  label { display:block; font-weight:600; margin: 8px 0 4px; }
+  input[type=text], input[type=password] { width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; }
+  button { padding:8px 14px; border:1px solid #888; border-radius:6px; cursor:pointer; background:#f5f5f5; }
+  button.primary { background:#1e90ff; color:#fff; border-color:#1e90ff; }
+  .muted { color:#666; font-size: 0.9em; }
+  .ok { color:#0a7d00; font-weight:600; }
+  .bad { color:#b00020; font-weight:600; }
+  pre { background:#fafafa; border:1px solid #eee; border-radius:6px; padding:10px; overflow:auto; max-height: 360px; }
 </style>
 </head>
 <body>
 <div class="card">
   <h2>DuckDNS configuration</h2>
-  <p class="muted">Set your subdomain(s) and token. This device will update DuckDNS regularly via systemd timer.</p>
+  <p class="muted">Set your subdomain(s) and token. This device updates DuckDNS via a systemd timer.</p>
+
   <div class="row">
     <div>
-      <label>Subdomain(s) <span class="muted">(comma-separated; enter just the name, e.g. <b>keukasensor1</b>)</span></label>
-      <input id="domains" type="text" value="{dom}" placeholder="keukasensor1,secondname">
+      <label>Subdomain(s) <span class="muted">(comma-separated; just the name, e.g. <b>keukasensor1</b>)</span></label>
+      <input id="domains" type="text" value="%%DOMAINS%%" placeholder="keukasensor1,secondname">
     </div>
     <div>
       <label>Token</label>
-      <input id="token" type="password" value="{tok}" placeholder="DuckDNS account token">
+      <input id="token" type="password" value="%%TOKEN%%" placeholder="DuckDNS account token">
     </div>
   </div>
 
@@ -179,80 +216,152 @@ def admin_duckdns():
 
   <h3 style="margin-top:20px;">Status</h3>
   <div class="row">
-    <div>Service: <span id="svc" class="muted">…</span></div>
+    <div>Service (oneshot): <span id="svc" class="muted">…</span></div>
     <div>Timer: <span id="tmr" class="muted">…</span></div>
+    <div>Next run: <span id="next" class="muted">—</span></div>
   </div>
 
-  <h3 style="margin-top:16px;">Last update</h3>
-  <div class="muted" id="when">—</div>
+  <div class="row" style="margin-top:8px">
+    <div>Last result: <span id="last_res" class="muted">—</span></div>
+    <div>Last update: <span id="when" class="muted">—</span></div>
+  </div>
+
+  <div class="row" style="margin-top:8px">
+    <div>Service substate: <span id="svc_sub" class="muted">—</span></div>
+    <div>ExecMainStatus: <span id="svc_code" class="muted">—</span></div>
+    <div>Last start: <span id="svc_start" class="muted">—</span></div>
+    <div>Last exit: <span id="svc_exit" class="muted">—</span></div>
+  </div>
+
+  <h3 style="margin-top:16px;">Update log</h3>
   <pre id="log">(fetching…)</pre>
-  <p class="muted">Tip: you can also manage Wi-Fi at <a href="/admin/wifi">/admin/wifi</a>.</p>
 </div>
 
 <script>
-async function loadStatus() {{
-  const r = await fetch('/api/duckdns/status', {{headers: {{'Authorization': '{request.headers.get("Authorization","")}'}}}});
-  const j = await r.json();
-  document.getElementById('svc').innerHTML = j.service_active ? '<span class="ok">active</span>' : '<span class="bad">inactive</span>';
+async function readJSONOrThrow(r) {
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    // Surface the first part of any HTML/text error (e.g., default error page)
+    throw new Error(text.slice(0, 200));
+  }
+}
+
+async function loadStatus() {
+  const r = await fetch('/api/duckdns/status', {headers: {'Authorization': '%%AUTH%%', 'Accept':'application/json'}});
+  const j = await readJSONOrThrow(r);
+
+  document.getElementById('svc').innerHTML = j.service_active ? '<span class="ok">running</span>' : '<span class="muted">inactive</span>';
   document.getElementById('tmr').innerHTML = (j.timer_enabled ? 'enabled' : 'disabled') + ' / ' + (j.timer_active ? 'active' : 'inactive');
-  document.getElementById('when').textContent = j.last.when ? ('Last: ' + j.last.when) : '—';
-  document.getElementById('log').textContent = j.last.text || '—';
-  if (j.conf) {{
+  document.getElementById('next').textContent = j.timer_next || '—';
+
+  if (j.last_result === 'OK') {
+    document.getElementById('last_res').innerHTML = '<span class="ok">OK</span>';
+  } else if (j.last_result === 'KO') {
+    document.getElementById('last_res').innerHTML = '<span class="bad">KO</span>';
+  } else {
+    document.getElementById('last_res').textContent = '—';
+  }
+
+  document.getElementById('when').textContent = j.last && j.last.when ? j.last.when : '—';
+
+  document.getElementById('svc_sub').textContent = j.service_substate || '—';
+  document.getElementById('svc_code').textContent = (j.service_exec_status === null || j.service_exec_status === undefined) ? '—' : String(j.service_exec_status);
+  document.getElementById('svc_start').textContent = j.service_started_at || '—';
+  document.getElementById('svc_exit').textContent = j.service_exited_at || '—';
+
+  document.getElementById('log').textContent = (j.last && j.last.text) ? j.last.text : '—';
+
+  if (j.conf) {
     if (j.conf.domains !== undefined) document.getElementById('domains').value = j.conf.domains || '';
     if (j.conf.token   !== undefined) document.getElementById('token').value   = j.conf.token || '';
-  }}
-}}
-async function save() {{
-  const body = {{
+  }
+}
+
+async function save() {
+  const body = {
     domains: document.getElementById('domains').value.trim(),
     token:   document.getElementById('token').value.trim()
-  }};
+  };
   document.getElementById('busy').style.display = 'inline';
-  try {{
-    const r = await fetch('/api/duckdns/save', {{
+  try {
+    const r = await fetch('/api/duckdns/save', {
       method:'POST',
-      headers: {{
+      headers: {
         'Content-Type':'application/json',
-        'Authorization': '{request.headers.get("Authorization","")}'
-      }},
+        'Authorization': '%%AUTH%%',
+        'Accept':'application/json'
+      },
       body: JSON.stringify(body)
-    }});
-    const j = await r.json();
-    if (!j.ok) alert('Save failed: ' + (j.error||'unknown error'));
+    });
+    const j = await readJSONOrThrow(r);
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
     await loadStatus();
-  }} finally {{
+  } catch (e) {
+    alert('DuckDNS save failed: ' + e.message);
+  } finally {
     document.getElementById('busy').style.display = 'none';
-  }}
-}}
-async function runNow() {{
+  }
+}
+
+async function runNow() {
   document.getElementById('busy').style.display = 'inline';
-  try {{
-    const r = await fetch('/api/duckdns/run', {{method:'POST', headers: {{'Authorization': '{request.headers.get("Authorization","")}'}}}});
-    const j = await r.json();
-    if (!j.ok) alert('Run failed: ' + (j.error||'unknown error'));
-    setTimeout(loadStatus, 1000);
-  }} finally {{
+  try {
+    const r = await fetch('/api/duckdns/run', {method:'POST', headers: {'Authorization': '%%AUTH%%', 'Accept':'application/json'}});
+    const j = await readJSONOrThrow(r);
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    setTimeout(loadStatus, 900);
+  } catch (e) {
+    alert('DuckDNS run failed: ' + e.message);
+  } finally {
     document.getElementById('busy').style.display = 'none';
-  }}
-}}
-async function timer(enable) {{
+  }
+}
+
+async function timer(enable) {
   document.getElementById('busy').style.display = 'inline';
-  try {{
-    const r = await fetch('/api/duckdns/timer', {{
+  try {
+    const r = await fetch('/api/duckdns/timer', {
       method:'POST',
-      headers: {{'Content-Type':'application/json', 'Authorization': '{request.headers.get("Authorization","")}' }},
-      body: JSON.stringify({{enabled: !!enable}})
-    }});
-    const j = await r.json();
-    if (!j.ok) alert('Timer change failed: ' + (j.error||'unknown error'));
+      headers: {'Content-Type':'application/json', 'Authorization': '%%AUTH%%', 'Accept':'application/json' },
+      body: JSON.stringify({enabled: !!enable})
+    });
+    const j = await readJSONOrThrow(r);
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
     await loadStatus();
-  }} finally {{
+  } catch (e) {
+    alert('DuckDNS timer change failed: ' + e.message);
+  } finally {
     document.getElementById('busy').style.display = 'none';
-  }}
-}}
+  }
+}
 loadStatus();
 </script>
-</body></html>"""
+</body></html>
+"""
+
+# ----------------------- HTML route -----------------------
+
+@duckdns_bp.route("/admin/duckdns", methods=["GET"])
+def admin_duckdns():
+    if not _require_admin(request):
+        return Response(
+            "Unauthorized",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Keuka Admin"'}
+        )
+
+    cfg = _read_conf()
+    dom = html.escape(cfg.get("domains", ""))
+    tok = html.escape(cfg.get("token", ""))
+    auth_hdr = request.headers.get("Authorization", "")
+
+    html_page = (_DUCKDNS_HTML_TMPL
+                 .replace("%%DOMAINS%%", dom)
+                 .replace("%%TOKEN%%", tok)
+                 .replace("%%AUTH%%", auth_hdr))
+
     return Response(html_page, mimetype="text/html")
 
 
@@ -262,8 +371,13 @@ loadStatus();
 def api_status():
     if not _require_admin(request):
         return jsonify(ok=False, error="unauthorized"), 401
+
     conf = _read_conf()
     last = _last_update()
+    svc = _service_details()
+    tmr = _timer_details()
+    last_res = _last_result()
+
     return jsonify(
         ok=True,
         conf={"domains": conf.get("domains",""), "token": conf.get("token","")},
@@ -271,6 +385,14 @@ def api_status():
         timer_active=_unit_active(TIMER),
         timer_enabled=_unit_enabled(TIMER),
         last=last,
+        timer_next=tmr.get("timer_next"),
+        timer_last_trigger=tmr.get("timer_last_trigger"),
+        last_result=last_res.get("last_result"),
+        last_result_line=last_res.get("last_result_line"),
+        service_substate=svc.get("service_substate"),
+        service_exec_status=svc.get("service_exec_status"),
+        service_started_at=svc.get("service_started_at"),
+        service_exited_at=svc.get("service_exited_at"),
     )
 
 @duckdns_bp.route("/api/duckdns/save", methods=["POST"])

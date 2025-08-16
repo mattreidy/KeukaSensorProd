@@ -9,6 +9,7 @@ Type=simple
 # IMPORTANT: allow sudo to elevate inside this service
 NoNewPrivileges=no
 RestrictSUIDSGID=no
+Environment=PYTHONPATH=/usr/lib/python3/dist-packages
 
 User=pi
 Group=pi
