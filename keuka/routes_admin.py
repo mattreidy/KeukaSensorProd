@@ -132,6 +132,41 @@ def admin_wifi():
         </div>
       </div>
 
+      <div class="card">
+        <h3 style="margin-top:0">DuckDNS &amp; Public IP</h3>
+
+        <div class="flex" style="gap:.5rem;flex-wrap:wrap;margin:.3rem 0 .6rem 0">
+          <div style="min-width:260px;flex:1">
+            <label>DuckDNS Subdomain(s) <span class="muted">(comma separated)</span></label>
+            <input id="dd_domains" type="text" placeholder="e.g. keukasensor1,backupname">
+          </div>
+          <div style="min-width:260px;flex:1">
+            <label>DuckDNS Token</label>
+            <input id="dd_token" type="password" placeholder="DuckDNS account token">
+          </div>
+        </div>
+
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.2rem 0 .6rem 0">
+          <button class="btn" id="dd_btn_save">Save</button>
+          <button class="btn" id="dd_btn_run">Run update now</button>
+          <button class="btn" id="dd_btn_toggle">Toggle hourly timer</button>
+          <span class="muted" id="dd_busy" style="display:none">Working…</span>
+        </div>
+
+        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem">
+          <div>Status (service): <span id="dd_svc" class="muted">—</span></div>
+          <div>Timer: <span id="dd_tmr" class="muted">—</span></div>
+          <div>Last DuckDNS update: <span id="dd_last" class="muted">—</span></div>
+        </div>
+
+        <hr style="margin:.8rem 0">
+
+        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem">
+          <div>Current Public IP: <span id="wan_ip" class="mono">—</span></div>
+          <div>Last Public IP change: <span id="wan_changed" class="muted">—</span></div>
+        </div>
+      </div>
+
       <script>
         const q = (s)=>document.querySelector(s);
 
