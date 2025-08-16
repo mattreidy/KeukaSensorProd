@@ -7,6 +7,7 @@
 #  - /api/wifi/connect    POST json {ssid, psk} -> connect via DHCP, wait for IP
 #  - /api/wifi/ip         POST json {mode, ip_cidr?, router?, dns_csv?} -> static/DHCP
 #  - /api/wifi/status     GET -> current status + IP/GW/DNS for both ifaces
+#  - /api/wanip           GET -> current public IP and last-change timestamp (tracked)
 #  - /admin/update        Code-only updater for keuka/ + version compare (local vs remote)
 #  - /admin/version       returns local/remote commit SHAs (+ source + error)
 #  - /admin/start_update  starts code-only update
@@ -15,10 +16,12 @@
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
-
+from pathlib import Path
 import json
+import re
+from datetime import datetime, timezone
+from urllib.request import urlopen
 from flask import Blueprint, request, jsonify, redirect, Response
-
 from ui import render_page
 from config import WLAN_STA_IFACE, WLAN_AP_IFACE
 from wifi_net import (
@@ -30,12 +33,77 @@ from wifi_net import (
 from updater import updater, APP_ROOT, REPO_URL, SERVICE_NAME
 from version import get_local_commit_with_source, get_remote_commit, short_sha
 
+# Track last seen public IP + when it changed (stored under keuka/)
+WAN_TRACK = Path(APP_ROOT) / "wan_ip.json"
+
 admin_bp = Blueprint("admin", __name__)
 
 
 @admin_bp.route("/admin")
 def admin_index():
     return redirect("/admin/wifi", code=302)
+
+
+# --- Public WAN IP helper -----------------------------------------------------
+
+def _fetch_public_ip() -> str | None:
+    """Fast external check for IPv4; returns dotted quad or None."""
+    try:
+        with urlopen("https://api.ipify.org", timeout=4) as f:
+            ip = f.read().decode("utf-8", "ignore").strip()
+            if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", ip):
+                return ip
+    except Exception:
+        pass
+    return None
+
+
+@admin_bp.route("/api/wanip")
+def api_wanip():
+    """
+    Returns {"ok": True, "ip": "...", "changed_at": ISO8601, "checked_at": ISO8601}
+    Updates WAN_TRACK if the IP changed.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    prev = {}
+    try:
+        if WAN_TRACK.exists():
+            prev = json.loads(WAN_TRACK.read_text())
+    except Exception:
+        prev = {}
+
+    prev_ip = prev.get("ip")
+    prev_changed = prev.get("changed_at")
+
+    ip = _fetch_public_ip()
+    if ip and ip != prev_ip:
+        prev_ip = ip
+        prev_changed = now_iso
+        try:
+            WAN_TRACK.write_text(json.dumps({
+                "ip": ip,
+                "changed_at": prev_changed,
+                "checked_at": now_iso,
+            }))
+        except Exception:
+            pass
+    else:
+        try:
+            if ip:
+                WAN_TRACK.write_text(json.dumps({
+                    "ip": prev_ip or ip,
+                    "changed_at": prev_changed,
+                    "checked_at": now_iso,
+                }))
+        except Exception:
+            pass
+
+    return jsonify({
+        "ok": True,
+        "ip": ip or (prev_ip or None),
+        "changed_at": prev_changed,
+        "checked_at": now_iso,
+    })
 
 
 # -------- HTML page: Wi-Fi --------
@@ -66,6 +134,8 @@ def admin_wifi():
         }}
         input::placeholder {{ color: #666; }}
         .topnav a {{ margin-right:.8rem; text-decoration:none; }}
+        .ok {{ color:#0a7d00; font-weight:600; }}
+        .bad {{ color:#b00020; font-weight:600; }}
       </style>
 
       <div class="flex" style="gap:.8rem;align-items:center;margin-bottom:.3rem">
@@ -130,45 +200,61 @@ def admin_wifi():
           <h3 style="margin-top:0">Status (both ifaces)</h3>
           <pre id="status" class="mono" style="white-space:pre-wrap;margin-top:.4rem"></pre>
         </div>
-      </div>
 
-      <div class="card">
-        <h3 style="margin-top:0">DuckDNS &amp; Public IP</h3>
+        <!-- DuckDNS + Public IP card -->
+        <div class="card">
+          <h3 style="margin-top:0">DuckDNS &amp; Public IP</h3>
 
-        <div class="flex" style="gap:.5rem;flex-wrap:wrap;margin:.3rem 0 .6rem 0">
-          <div style="min-width:260px;flex:1">
-            <label>DuckDNS Subdomain(s) <span class="muted">(comma separated)</span></label>
-            <input id="dd_domains" type="text" placeholder="e.g. keukasensor1,backupname">
+          <div class="flex" style="gap:.5rem;flex-wrap:wrap;margin:.3rem 0 .6rem 0">
+            <div style="min-width:260px;flex:1">
+              <label>DuckDNS Subdomain(s) <span class="muted">(comma separated)</span></label>
+              <input id="dd_domains" type="text" placeholder="e.g. keukasensor1,backupname">
+            </div>
+            <div style="min-width:260px;flex:1">
+              <label>DuckDNS Token</label>
+              <input id="dd_token" type="password" placeholder="DuckDNS account token">
+            </div>
           </div>
-          <div style="min-width:260px;flex:1">
-            <label>DuckDNS Token</label>
-            <input id="dd_token" type="password" placeholder="DuckDNS account token">
+
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.2rem 0 .6rem 0">
+            <button class="btn" id="dd_btn_save">Save</button>
+            <button class="btn" id="dd_btn_run">Run update now</button>
+            <button class="btn" id="dd_btn_toggle">Toggle hourly timer</button>
+            <span class="muted" id="dd_busy" style="display:none">Working…</span>
           </div>
-        </div>
 
-        <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.2rem 0 .6rem 0">
-          <button class="btn" id="dd_btn_save">Save</button>
-          <button class="btn" id="dd_btn_run">Run update now</button>
-          <button class="btn" id="dd_btn_toggle">Toggle hourly timer</button>
-          <span class="muted" id="dd_busy" style="display:none">Working…</span>
-        </div>
+          <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem">
+            <div>Status (service): <span id="dd_svc" class="muted">—</span></div>
+            <div>Timer: <span id="dd_tmr" class="muted">—</span></div>
+            <div>Last DuckDNS update: <span id="dd_last" class="muted">—</span></div>
+          </div>
 
-        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem">
-          <div>Status (service): <span id="dd_svc" class="muted">—</span></div>
-          <div>Timer: <span id="dd_tmr" class="muted">—</span></div>
-          <div>Last DuckDNS update: <span id="dd_last" class="muted">—</span></div>
-        </div>
+          <hr style="margin:.8rem 0">
 
-        <hr style="margin:.8rem 0">
-
-        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem">
-          <div>Current Public IP: <span id="wan_ip" class="mono">—</span></div>
-          <div>Last Public IP change: <span id="wan_changed" class="muted">—</span></div>
+          <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem">
+            <div>Current Public IP: <span id="wan_ip" class="mono">—</span></div>
+            <div>Last Public IP change: <span id="wan_changed" class="muted">—</span></div>
+          </div>
         </div>
       </div>
 
       <script>
         const q = (s)=>document.querySelector(s);
+        function fmtLocal(iso) {{
+          if (!iso) return '—';
+          try {{
+            const d = new Date(iso);
+            if (isNaN(d)) return iso; // fall back if parsing ever fails
+            return new Intl.DateTimeFormat(undefined, {{
+              dateStyle: 'medium',
+              timeStyle: 'short'
+            }}).format(d);
+          }} catch {{
+            return iso;
+          }}
+        }}
+
+        let dd_state = {{ timer_enabled: false, timer_active: false }};
 
         function renderScan(list) {{
           const ul = q('#scanList'); ul.innerHTML = "";
@@ -268,8 +354,125 @@ def admin_wifi():
           }}
         }};
 
+        // --- DuckDNS helpers on this page (reuses existing /api/duckdns/* endpoints) ---
+        async function dd_load() {{
+          try {{
+            const r = await fetch('/api/duckdns/status', {{ cache: 'no-store' }});
+            if (r.status === 401) throw new Error('auth required: open /admin/duckdns once');
+            const j = await r.json();
+            if (!j.ok) throw new Error(j.error || 'status failed');
+            // populate fields
+            if (j.conf) {{
+              document.getElementById('dd_domains').value = j.conf.domains || '';
+              document.getElementById('dd_token').value   = j.conf.token || '';
+            }}
+            document.getElementById('dd_svc').innerHTML = j.service_active ? '<span class="ok">active</span>' : '<span class="bad">inactive</span>';
+            document.getElementById('dd_tmr').textContent = (j.timer_enabled ? 'enabled' : 'disabled') + ' / ' + (j.timer_active ? 'active' : 'inactive');
+            document.getElementById('dd_last').textContent = (j.last && j.last.when) ? j.last.when : '—';
+            dd_state.timer_enabled = !!j.timer_enabled;
+            dd_state.timer_active  = !!j.timer_active;
+            // update toggle label
+            updateToggleLabel();
+          }} catch (e) {{
+            document.getElementById('dd_svc').textContent = '(unavailable)';
+            document.getElementById('dd_tmr').textContent = '(unavailable)';
+            document.getElementById('dd_last').textContent = '(unavailable)';
+            console.debug('duckdns status:', e.message);
+          }}
+        }}
+
+        function updateToggleLabel() {{
+          const b = document.getElementById('dd_btn_toggle');
+          b.textContent = dd_state.timer_enabled ? 'Disable hourly timer' : 'Enable hourly timer';
+        }}
+
+        async function dd_save() {{
+          const body = {{
+            domains: document.getElementById('dd_domains').value.trim(),
+            token:   document.getElementById('dd_token').value.trim()
+          }};
+          document.getElementById('dd_busy').style.display = 'inline';
+          try {{
+            const r = await fetch('/api/duckdns/save', {{
+              method: 'POST',
+              headers: {{ 'Content-Type': 'application/json' }},
+              body: JSON.stringify(body)
+            }});
+            if (r.status === 401) throw new Error('auth required');
+            const j = await r.json();
+            if (!j.ok) throw new Error(j.error || 'save failed');
+            await dd_load();
+          }} catch (e) {{
+            alert('DuckDNS save failed: ' + e.message);
+          }} finally {{
+            document.getElementById('dd_busy').style.display = 'none';
+          }}
+        }}
+
+        async function dd_run() {{
+          document.getElementById('dd_busy').style.display = 'inline';
+          try {{
+            const r = await fetch('/api/duckdns/run', {{ method: 'POST' }});
+            if (r.status === 401) throw new Error('auth required');
+            const j = await r.json();
+            if (!j.ok) throw new Error(j.error || 'run failed');
+            await new Promise(res => setTimeout(res, 700));
+            await dd_load();
+          }} catch (e) {{
+            alert('DuckDNS run failed: ' + e.message);
+          }} finally {{
+            document.getElementById('dd_busy').style.display = 'none';
+          }}
+        }}
+
+        async function dd_toggle() {{
+          document.getElementById('dd_busy').style.display = 'inline';
+          try {{
+            const want = !dd_state.timer_enabled;
+            const r = await fetch('/api/duckdns/timer', {{
+              method: 'POST',
+              headers: {{ 'Content-Type': 'application/json' }},
+              body: JSON.stringify({{ enabled: want }})
+            }});
+            if (r.status === 401) throw new Error('auth required');
+            const j = await r.json();
+            if (!j.ok) throw new Error(j.error || 'timer change failed');
+            dd_state.timer_enabled = want;
+            updateToggleLabel();
+            await dd_load();
+          }} catch (e) {{
+            alert('DuckDNS timer change failed: ' + e.message);
+          }} finally {{
+            document.getElementById('dd_busy').style.display = 'none';
+          }}
+        }}
+
+        // --- WAN IP (public) ---
+        async function wan_refresh() {{
+          try {{
+            const r = await fetch('/api/wanip', {{ cache: 'no-store' }});
+            const j = await r.json();
+            document.getElementById('wan_ip').textContent = j.ip || '—';
+            const changedEl = document.getElementById('wan_changed');
+            changedEl.textContent = fmtLocal(j.changed_at);
+            changedEl.title = j.changed_at || '';
+          }} catch (e) {{
+            document.getElementById('wan_ip').textContent = '(unavailable)';
+            document.getElementById('wan_changed').textContent = '(unavailable)';
+          }}
+        }}
+
+        // Bind DuckDNS buttons
+        document.getElementById('dd_btn_save').onclick = dd_save;
+        document.getElementById('dd_btn_run').onclick = dd_run;
+        document.getElementById('dd_btn_toggle').onclick = dd_toggle;
+
         // initial
         refreshStatus();
+        dd_load();
+        wan_refresh();
+        // refresh WAN/IP status periodically
+        setInterval(wan_refresh, 60_000);
       </script>
     """
     return render_page("Keuka Sensor – Wi-Fi", body)
@@ -408,7 +611,7 @@ def admin_update():
 
       function appendLog(line) {{
         const atBottom = (logbox.scrollTop + logbox.clientHeight + 8) >= logbox.scrollHeight;
-        logbox.textContent += (line.endsWith('\\n') ? line : (line + '\\n'));
+        logbox.textContent = line ? (logbox.textContent + (line.endsWith('\\n') ? line : (line + '\\n'))) : logbox.textContent;
         if (atBottom) logbox.scrollTop = logbox.scrollHeight;
       }}
 
