@@ -20,6 +20,27 @@ from config import (
 from utils import sh, read_text, write_text_atomic
 
 # ---- helpers ---------------------------------------------------------------
+def ap_ssid_current(prefix: str = "KeukaSensor") -> str:
+    """
+    1) Prefer /run/keuka-ap-ssid written by ks-set-ap-ssid.sh
+    2) Else derive <prefix>_<last4hex> from AP MAC
+    3) Fallback to "<prefix>_####"
+    """
+    try:
+        txt = (Path("/run/keuka-ap-ssid").read_text(errors="ignore") or "").strip()
+        if txt:
+            return txt
+    except Exception:
+        pass
+    try:
+        mac = (Path(f"/sys/class/net/{WLAN_AP_IFACE}/address")
+               .read_text(errors="ignore").strip().replace(":", ""))
+        if mac:
+            return f"{prefix}_{mac[-4:].upper()}"
+    except Exception:
+        pass
+    return f"{prefix}_####"
+
 
 def _wpacli(*args: str) -> tuple[int, str]:
     """Run wpa_cli against the STA iface WITHOUT sudo (uses control socket)."""

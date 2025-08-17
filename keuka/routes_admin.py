@@ -6,12 +6,12 @@
 #  - /api/wifi/connect    POST json {ssid, psk} -> connect via DHCP, wait for IP
 #  - /api/wifi/ip         POST json {mode, ip_cidr?, router?, dns_csv?} -> static/DHCP
 #  - /api/wifi/status     GET -> current status + IP/GW/DNS for both ifaces
+#  - /api/ap_ssid         GET -> just the AP SSID (lightweight helper)
 #  - /api/wanip           GET -> current public IP and last-change timestamp (tracked)
 #  - /admin/update        Code-only updater for keuka/ + version compare (local vs remote)
 #  - /admin/version       returns local/remote commit SHAs (+ source + error)
 #  - /admin/start_update  starts code-only update
 #  - /admin/cancel_update cancels an in-flight update
-#  - /admin/status        updater state + ONLY last attempt logs
 #
 # NOTE: This file enforces HTTP Basic Auth for:
 #   * /admin/**
@@ -31,6 +31,7 @@ from config import WLAN_STA_IFACE, WLAN_AP_IFACE, ADMIN_USER, ADMIN_PASS
 from wifi_net import (
     wifi_scan, wifi_connect, wifi_status_sta,
     ip_addr4, gw4, dns_servers, dhcpcd_current_mode, apply_network,
+    ap_ssid_current,
 )
 
 # --- update feature imports ---
@@ -105,7 +106,7 @@ def _fetch_public_ip() -> str | None:
     try:
         with urlopen("https://api.ipify.org", timeout=4) as f:
             ip = f.read().decode("utf-8", "ignore").strip()
-            if re.match(r"^\\d{1,3}(?:\\.\\d{1,3}){3}$", ip):
+            if re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", ip):
                 return ip
     except Exception:
         pass
@@ -195,7 +196,9 @@ _WIFI_HTML_TMPL = """
 
   <div class="flex" style="gap:.8rem;align-items:center;margin-bottom:.3rem">
     <h1 style="margin:0">Wi-Fi Setup</h1>
-    <span class="muted">STA = %%STA%% (LAN), AP = %%AP%% (KeukaSensor)</span>
+    <span class="muted">
+      STA = %%STA%% (LAN), AP = %%AP%% (<span id="hdrApSsid">%%APSSID%%</span>)
+    </span>
   </div>
 
   <div class="topnav" style="margin:.4rem 0 .8rem 0;">
@@ -306,20 +309,12 @@ _WIFI_HTML_TMPL = """
   <script>
     const q = (s)=>document.querySelector(s);
     function fmtLocal(iso) {
-      if (!iso) return '—';   // nothing to format
-
+      if (!iso) return '—';
       try {
         const d = new Date(iso);
-        if (isNaN(d)) {
-          return iso;
-        }
-        return new Intl.DateTimeFormat(undefined, {
-          dateStyle: 'medium',
-          timeStyle: 'short'
-        }).format(d);
-      } catch {
-        return iso;
-      }
+        if (isNaN(d)) return iso;
+        return new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(d);
+      } catch { return iso; }
     }
 
     let dd_state = { timer_enabled: false, timer_active: false };
@@ -341,21 +336,9 @@ _WIFI_HTML_TMPL = """
       const j = await r.json();
       q('#status').textContent = JSON.stringify(j, null, 2);
       q('#curIp').textContent = "STA ip: " + (j.ip['%%STA%%'] || "(none)") + "   |   GW: " + (j.gateway_sta || "(none)");
-
-      if (j.dhcpcd && j.dhcpcd.mode === "static") {
-        q('#mode').value = "static";
-        q('#staticFields').style.display = "block";
-        q('#ip_cidr').value = j.dhcpcd.ip || "";
-        q('#router').value = j.dhcpcd.router || "";
-        q('#dns_csv').value = (j.dhcpcd.dns||[]).join(", ");
-      } else {
-        q('#mode').value = "dhcp";
-        q('#staticFields').style.display = "none";
-        const cur = j.ip['%%STA%%'];
-        if (cur && cur.includes('/')) {
-          const ipOnly = cur.split('/')[0];
-          q('#ip_cidr').placeholder = ipOnly.replace(/\d+$/, '50') + "/24";
-        }
+      if (j.ap_ssid) {
+        const el = document.getElementById('hdrApSsid');
+        if (el) el.textContent = j.ap_ssid;
       }
     }
 
@@ -378,14 +361,10 @@ _WIFI_HTML_TMPL = """
     q('#connectForm').onsubmit = async (ev) => {
       ev.preventDefault();
       q('#connectNote').textContent = "Connecting…";
-      const payload = {
-        ssid: q('#ssid').value.trim(),
-        psk: q('#psk').value,
-      };
+      const payload = { ssid: q('#ssid').value.trim(), psk: q('#psk').value };
       try {
         const r = await fetch('/api/wifi/connect', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
+          method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify(payload)
         });
         const j = await r.json();
@@ -408,8 +387,7 @@ _WIFI_HTML_TMPL = """
       };
       try {
         const r = await fetch('/api/wifi/ip', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
+          method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(payload)
         });
         const j = await r.json();
@@ -434,17 +412,13 @@ _WIFI_HTML_TMPL = """
         q('#dd_tmr').textContent = (j.timer_enabled ? 'enabled' : 'disabled') + ' / ' + (j.timer_active ? 'active' : 'inactive');
         q('#dd_next').textContent = j.timer_next || '—';
 
-        if (j.last_result === 'OK') {
-          q('#dd_res').innerHTML = '<span class="ok">OK</span>';
-        } else if (j.last_result === 'KO') {
-          q('#dd_res').innerHTML = '<span class="bad">KO</span>';
-        } else {
-          q('#dd_res').textContent = '—';
-        }
+        if (j.last_result === 'OK') q('#dd_res').innerHTML = '<span class="ok">OK</span>';
+        else if (j.last_result === 'KO') q('#dd_res').innerHTML = '<span class="bad">KO</span>';
+        else q('#dd_res').textContent = '—';
 
         q('#dd_last').textContent = (j.last && j.last.when) ? j.last.when : '—';
         q('#dd_sub').textContent = j.service_substate || '—';
-        q('#dd_code').textContent = (j.service_exec_status === null || j.service_exec_status === undefined) ? '—' : String(j.service_exec_status);
+        q('#dd_code').textContent = (j.service_exec_status == null) ? '—' : String(j.service_exec_status);
         q('#dd_start').textContent = j.service_started_at || '—';
         q('#dd_exit').textContent = j.service_exited_at || '—';
 
@@ -478,8 +452,7 @@ _WIFI_HTML_TMPL = """
       document.getElementById('dd_busy').style.display = 'inline';
       try {
         const r = await fetch('/api/duckdns/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body)
         });
         if (r.status === 401) throw new Error('auth required');
@@ -514,8 +487,7 @@ _WIFI_HTML_TMPL = """
       try {
         const want = !dd_state.timer_enabled;
         const r = await fetch('/api/duckdns/timer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ enabled: want })
         });
         if (r.status === 401) throw new Error('auth required');
@@ -531,45 +503,39 @@ _WIFI_HTML_TMPL = """
       }
     }
 
-    // Bind DuckDNS buttons
-    document.getElementById('dd_btn_save').onclick = dd_save;
-    document.getElementById('dd_btn_run').onclick = dd_run;
-    document.getElementById('dd_btn_toggle').onclick = dd_toggle;
-
-    // --- WAN IP (public) ---
-    async function wan_refresh() {
-      try {
-        const r = await fetch('/api/wanip', { cache: 'no-store' });
-        const j = await r.json();
+    // initial
+    refreshStatus();
+    dd_load();
+    (function wan_loop(){
+      fetch('/api/wanip',{cache:'no-store'}).then(r=>r.json()).then(j=>{
         document.getElementById('wan_ip').textContent = j.ip || '—';
         const changedEl = document.getElementById('wan_changed');
         changedEl.textContent = fmtLocal(j.changed_at);
         changedEl.title = j.changed_at || '';
-      } catch (e) {
-        document.getElementById('wan_ip').textContent = '(unavailable)';
-        document.getElementById('wan_changed').textContent = '(unavailable)';
-      }
-    }
-
-    // initial
-    refreshStatus();
-    dd_load();
-    wan_refresh();
-    setInterval(wan_refresh, 60_000);
+      }).catch(()=>{
+        document.getElementById('wan_ip').textContent='(unavailable)';
+        document.getElementById('wan_changed').textContent='(unavailable)';
+      });
+      setTimeout(wan_loop, 60000);
+    })();
   </script>
 """
 
 # -------- HTML page: Wi-Fi --------
 @admin_bp.route("/admin/wifi")
 def admin_wifi():
-    body = _WIFI_HTML_TMPL.replace("%%STA%%", WLAN_STA_IFACE).replace("%%AP%%", WLAN_AP_IFACE)
+    ap_ssid = ap_ssid_current()
+    body = (_WIFI_HTML_TMPL
+            .replace("%%STA%%", WLAN_STA_IFACE)
+            .replace("%%AP%%", WLAN_AP_IFACE)
+            .replace("%%APSSID%%", ap_ssid))
     return render_page("Keuka Sensor – Wi-Fi", body)
 
 
 # -------- HTML page: Update Code --------
 @admin_bp.route("/admin/update")
 def admin_update():
-    body = """
+    _UPDATE_HTML = """
       <style>
         .topnav a { margin-right:.8rem; text-decoration:none; }
         .badge { display:inline-block;padding:.15rem .45rem;border-radius:.4rem;background:#444;color:#fff; }
@@ -579,7 +545,7 @@ def admin_update():
 
       <div class="flex" style="gap:.8rem;align-items:center;margin-bottom:.3rem">
         <h1 style="margin:0">Update Code (keuka/ only)</h1>
-        <span class="muted">Repo: {REPO_URL}</span>
+        <span class="muted">Repo: %%REPO_URL%%</span>
       </div>
 
       <div class="topnav" style="margin:.4rem 0 .8rem 0;">
@@ -601,9 +567,9 @@ def admin_update():
 
       <div class="card">
         <h3>Code-only update (keuka/ folder)</h3>
-        <p>This pulls the latest code from <code>{REPO_URL}</code> (shallow clone),
+        <p>This pulls the latest code from <code>%%REPO_URL%%</code> (shallow clone),
         stages only the <code>keuka/</code> directory, backs up the current code on this Pi,
-        applies the update, and restarts <code>{SERVICE_NAME}</code>.</p>
+        applies the update, and restarts <code>%%SERVICE_NAME%%</code>.</p>
 
         <div style="display:flex;gap:.5rem;align-items:center;margin:.6rem 0;">
           <button id="btnStart" onclick="startUpdate()" class="btn">Start Update</button>
@@ -663,9 +629,7 @@ def admin_update():
         verBadge.textContent = 'checking...';
         verErr.textContent = '';
         try {
-          const r = await fetch('/admin/version?cb=' + Date.now(), {
-            headers: { 'Accept': 'application/json' }
-          });
+          const r = await fetch('/admin/version?cb=' + Date.now(), { headers: { 'Accept': 'application/json' }});
           const txt = await r.text();
           let v;
           try { v = JSON.parse(txt); } catch (e) { throw new Error(txt.slice(0,200)); }
@@ -680,21 +644,14 @@ def admin_update():
 
       async function startUpdate() {
         btnStart.disabled = true;
-        try {
-          await fetch('/admin/start_update', { method: 'POST' });
-        } catch (e) {
-          appendLog('Failed to start: ' + e.message);
-        } finally {
-          setTimeout(pollStatus, 200);
-        }
+        try { await fetch('/admin/start_update', { method: 'POST' }); }
+        catch (e) { appendLog('Failed to start: ' + e.message); }
+        finally { setTimeout(pollStatus, 200); }
       }
 
       async function cancelUpdate() {
-        try {
-          await fetch('/admin/cancel_update', { method: 'POST' });
-        } catch (e) {
-          appendLog('Failed to cancel: ' + e.message);
-        }
+        try { await fetch('/admin/cancel_update', { method: 'POST' }); }
+        catch (e) { appendLog('Failed to cancel: ' + e.message); }
       }
 
       function appendLog(line) {
@@ -709,9 +666,7 @@ def admin_update():
           const s = await r.json();
           stateText.textContent = s.state;
           setButtons(s.state);
-          if (Array.isArray(s.logs) && s.logs.length) {
-            logbox.textContent = s.logs.join('\\n');
-          }
+          if (Array.isArray(s.logs) && s.logs.length) logbox.textContent = s.logs.join('\\n');
           if (s.state === 'running') {
             pollTimer = setTimeout(pollStatus, 600);
           } else {
@@ -734,6 +689,9 @@ def admin_update():
       pollStatus();
       </script>
     """
+    body = (_UPDATE_HTML
+            .replace("%%REPO_URL%%", REPO_URL)
+            .replace("%%SERVICE_NAME%%", SERVICE_NAME))
     return render_page("Keuka Sensor – Update Code", body)
 
 
@@ -781,7 +739,14 @@ def api_wifi_status():
         "dns": dns_servers(),
         "dhcpcd": dhcpcd_current_mode(),
         "ifaces": {"sta": WLAN_STA_IFACE, "ap": WLAN_AP_IFACE},
+        "ap_ssid": ap_ssid_current(),
     })
+
+
+@admin_bp.route("/api/ap_ssid")
+def api_ap_ssid():
+    """Lightweight helper for pages that only need the SSID."""
+    return jsonify({"iface": WLAN_AP_IFACE, "ssid": ap_ssid_current()})
 
 
 # -------- JSON APIs: Update feature --------
