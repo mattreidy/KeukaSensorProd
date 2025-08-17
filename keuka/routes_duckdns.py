@@ -77,20 +77,41 @@ def _read_conf() -> dict:
         return {}
 
 def _write_conf(domains: str, token: str) -> None:
-    # Normalize a CSV of subdomains (no .duckdns.org suffix)
+    """
+    Write DuckDNS config as pi:pi (0600) so the duckdns-update.service (User=pi)
+    can read/update it without sudo. Atomic replace via os.replace().
+    """
+    import os
+    from shutil import chown as _chown
+
+    # Normalize CSV (strip optional ".duckdns.org")
     parts = [p.strip() for p in (domains or "").split(",") if p.strip()]
     clean = []
     for p in parts:
         if p.endswith(".duckdns.org"):
             p = p[:-len(".duckdns.org")]
         clean.append(p)
-    content = "token={}\ndomains={}\n".format(token.strip(), ",".join(clean))
-    # root-owned secret with 0600
+
+    content = "token={}\ndomains={}\n".format((token or "").strip(), ",".join(clean))
+
+    # Write to a temp file next to the target, then atomically replace
     tmp = CONF.with_suffix(".tmp")
     tmp.write_text(content)
-    _sh(["sudo", "-n", "chown", "root:root", str(tmp)])
-    _sh(["sudo", "-n", "chmod", "600", str(tmp)])
-    _sh(["sudo", "-n", "mv", str(tmp), str(CONF)])
+
+    # Ensure ownership/mode (running as pi, so chown is either a no-op or already correct)
+    try:
+        _chown(str(tmp), user="pi", group="pi")  # safe when running as pi
+    except Exception:
+        # Not fatal if chown isn't needed/allowed; keep going.
+        pass
+    try:
+        os.chmod(tmp, 0o600)
+    except Exception:
+        pass
+
+    # Atomic rename into place
+    os.replace(str(tmp), str(CONF))
+
 
 def _systemctl(args: str) -> tuple[int, str]:
     # -n prevents prompting for password; make sure 'pi' can sudo systemctl without password for these units.
