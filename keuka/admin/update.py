@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from flask import Blueprint, Response
 import json
-from datetime import datetime, timezone  # added for ISO timestamps in JSON
 
 from updater import updater, APP_ROOT, REPO_URL, SERVICE_NAME
 from version import get_local_commit_with_source, get_remote_commit, short_sha
@@ -87,30 +86,6 @@ def attach(bp: Blueprint) -> None:
           const verErr = document.getElementById('verErr');
           let pollTimer = null;
 
-          // ---- Local time helpers for ISO-8601 [UTC] timestamps in logs ----
-          function toLocalFromIso(iso) {
-            const d = new Date(iso);
-            if (isNaN(d)) return iso;
-            // Default locale/timezone of the browser; keep seconds for precision
-            return d.toLocaleString(undefined, {
-              year: 'numeric', month: '2-digit', day: '2-digit',
-              hour: '2-digit', minute: '2-digit', second: '2-digit'
-            });
-          }
-          function transformLogLine(line) {
-            // Convert leading [YYYY-MM-DDTHH:MM:SSZ] to local time
-            // Example: "[2025-08-17T14:22:05Z] message" -> "[8/17/2025, 10:22:05 AM] message" (depending on locale)
-            return line.replace(/^\\[(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z)\\]/,
-              (_, iso) => '[' + toLocalFromIso(iso) + ']');
-          }
-          function renderLogs(lines) {
-            if (!Array.isArray(lines)) return;
-            const mapped = lines.map(transformLogLine);
-            const atBottom = (logbox.scrollTop + logbox.clientHeight + 8) >= logbox.scrollHeight;
-            logbox.textContent = mapped.join('\\n');
-            if (atBottom) logbox.scrollTop = logbox.scrollHeight;
-          }
-
           function setButtons(state) {
             if (state === 'running') {
               btnStart.disabled = true;
@@ -171,12 +146,8 @@ def attach(bp: Blueprint) -> None:
           }
 
           function appendLog(line) {
-            // For ad-hoc lines we won't inject timestamps; still show as-is.
             const atBottom = (logbox.scrollTop + logbox.clientHeight + 8) >= logbox.scrollHeight;
-            const rendered = transformLogLine(line || '');
-            logbox.textContent = rendered
-              ? (logbox.textContent + (rendered.endsWith('\\n') ? rendered : (rendered + '\\n')))
-              : logbox.textContent;
+            logbox.textContent = line ? (logbox.textContent + (line.endsWith('\\n') ? line : (line + '\\n'))) : logbox.textContent;
             if (atBottom) logbox.scrollTop = logbox.scrollHeight;
           }
 
@@ -186,7 +157,7 @@ def attach(bp: Blueprint) -> None:
               const s = await r.json();
               stateText.textContent = s.state;
               setButtons(s.state);
-              if (Array.isArray(s.logs) && s.logs.length) renderLogs(s.logs);
+              if (Array.isArray(s.logs) && s.logs.length) logbox.textContent = s.logs.join('\\n');
               if (s.state === 'running') {
                 pollTimer = setTimeout(pollStatus, 600);
               } else {
@@ -228,22 +199,11 @@ def attach(bp: Blueprint) -> None:
     @bp.route("/admin/status")
     def admin_status():
         state, logs, t0, t1 = updater.get_logs()
-
-        def _iso(ts):
-            if ts is None:
-                return None
-            try:
-                return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            except Exception:
-                return None
-
         return Response(json.dumps({
             "state": state,
             "logs": logs[-1000:],
             "started_at": t0,
             "finished_at": t1,
-            "started_at_iso": _iso(t0),     # new: UTC ISO-8601 for easy client-side TZ conversion
-            "finished_at_iso": _iso(t1),    # new: UTC ISO-8601 for easy client-side TZ conversion
         }), mimetype="application/json")
 
     @bp.route("/admin/version")
