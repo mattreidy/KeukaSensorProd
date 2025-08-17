@@ -1,4 +1,4 @@
-# Production Design: Raspberry Pi 3A+ Water Temp & Level Sensor
+# Production Design: Keuka Sensor (Water Temp & Level Sensor)
 ---
 
 ## 0) Endpoints (compatibility preserved)
