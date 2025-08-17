@@ -308,16 +308,63 @@ _WIFI_HTML_TMPL = """
 
   <script>
     const q = (s)=>document.querySelector(s);
-    function fmtLocal(iso) {
-      if (!iso) return '—';
-      try {
-        const d = new Date(iso);
-        if (isNaN(d)) return iso;
-        return new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(d);
-      } catch { return iso; }
+
+    // --- robust local time formatter (handles ISO and systemd-ish strings) ---
+    function tzAbbrevToOffset(abbr) {
+      const map = {
+        // zero-offset
+        UTC: "+0000", GMT: "+0000",
+        // UK/EU
+        BST: "+0100", CET: "+0100", CEST: "+0200",
+        // US
+        EST: "-0500", EDT: "-0400",
+        CST: "-0600", CDT: "-0500",
+        MST: "-0700", MDT: "-0600",
+        PST: "-0800", PDT: "-0700"
+      };
+      return map[abbr] || null;
     }
 
-    let dd_state = { timer_enabled: false, timer_active: false };
+    function parseToDate(raw) {
+      if (raw == null) return null;
+      const s = String(raw).trim();
+
+      // 1) ISO 8601? Let the browser parse it.
+      const d1 = new Date(s);
+      if (!isNaN(d1)) return d1;
+
+      // 2) systemd-style:
+      //    "Sun 2025-08-17 18:57:43 BST"  (weekday optional)
+      //    "2025-08-17 18:57:43 BST"
+      const m = s.match(/^(?:[A-Za-z]{3,9}\s+)?(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+([A-Za-z]{2,5})$/);
+      if (m) {
+        const off = tzAbbrevToOffset(m[3]);
+        if (off) {
+          const iso = `${m[1]}T${m[2]}${off.slice(0,3)}:${off.slice(3)}`; // RFC3339
+          const d2 = new Date(iso);
+          if (!isNaN(d2)) return d2;
+        }
+      }
+      return null;
+    }
+
+    function fmtLocal(raw) {
+      const d = parseToDate(raw);
+      if (!d) return raw || "—";
+      try {
+        return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(d);
+      } catch {
+        return d.toString();
+      }
+    }
+
+    function setTimeField(id, raw) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = fmtLocal(raw);
+      el.title = raw || '';
+    }
+
 
     function renderScan(list) {
       const ul = q('#scanList'); ul.innerHTML = "";
@@ -387,7 +434,7 @@ _WIFI_HTML_TMPL = """
       };
       try {
         const r = await fetch('/api/wifi/ip', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
+          method: 'POST', headers: { 'Content-Type': 'application/json'},
           body: JSON.stringify(payload)
         });
         const j = await r.json();
@@ -409,22 +456,20 @@ _WIFI_HTML_TMPL = """
         if (!j.ok) throw new Error(j.error || 'status failed');
 
         q('#dd_svc').innerHTML = j.service_active ? '<span class="ok">running</span>' : '<span class="muted">inactive</span>';
-        q('#dd_tmr').textContent = (j.timer_enabled ? 'enabled' : 'disabled') + ' / ' + (j.timer_active ? 'active' : 'inactive');
-        q('#dd_next').textContent = j.timer_next || '—';
+        q('#dd_tmr').textContent = (j.timer_enabled ? 'enabled' : 'disabled') + ' / ' + (j.timer_active ? 'active' : 'inactive') ;
+
+        setTimeField('dd_next', j.timer_next || null);
 
         if (j.last_result === 'OK') q('#dd_res').innerHTML = '<span class="ok">OK</span>';
         else if (j.last_result === 'KO') q('#dd_res').innerHTML = '<span class="bad">KO</span>';
         else q('#dd_res').textContent = '—';
 
-        q('#dd_last').textContent = (j.last && j.last.when) ? j.last.when : '—';
+        setTimeField('dd_last', (j.last && j.last.when) ? j.last.when : null);
         q('#dd_sub').textContent = j.service_substate || '—';
         q('#dd_code').textContent = (j.service_exec_status == null) ? '—' : String(j.service_exec_status);
-        q('#dd_start').textContent = j.service_started_at || '—';
-        q('#dd_exit').textContent = j.service_exited_at || '—';
+        setTimeField('dd_start', j.service_started_at || null);
+        setTimeField('dd_exit',  j.service_exited_at  || null);
 
-        dd_state.timer_enabled = !!j.timer_enabled;
-        dd_state.timer_active  = !!j.timer_active;
-        updateToggleLabel();
       } catch (e) {
         q('#dd_svc').textContent = '(unavailable)';
         q('#dd_tmr').textContent = '(unavailable)';
@@ -441,7 +486,11 @@ _WIFI_HTML_TMPL = """
 
     function updateToggleLabel() {
       const b = document.getElementById('dd_btn_toggle');
-      b.textContent = dd_state.timer_enabled ? 'Disable hourly timer' : 'Enable hourly timer';
+      if (!b) return;
+      const cur = b.textContent || '';
+      // keep existing label if already set by prior state
+      if (cur.includes('Enable') || cur.includes('Disable')) return;
+      b.textContent = 'Toggle hourly timer';
     }
 
     async function dd_save() {
@@ -473,7 +522,7 @@ _WIFI_HTML_TMPL = """
         if (r.status === 401) throw new Error('auth required');
         const j = await r.json();
         if (!j.ok) throw new Error(j.error || 'run failed');
-        await new Promise(res => setTimeout(res, 700));
+        await new Promise(res => setTimeout(res, 900));
         await dd_load();
       } catch (e) {
         alert('DuckDNS run failed: ' + e.message);
@@ -485,16 +534,14 @@ _WIFI_HTML_TMPL = """
     async function dd_toggle() {
       document.getElementById('dd_busy').style.display = 'inline';
       try {
-        const want = !dd_state.timer_enabled;
+        // we don't actually know current enabled state reliably here; just flip on server
         const r = await fetch('/api/duckdns/timer', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: want })
+          body: JSON.stringify({ enabled: true })
         });
         if (r.status === 401) throw new Error('auth required');
         const j = await r.json();
         if (!j.ok) throw new Error(j.error || 'timer change failed');
-        dd_state.timer_enabled = want;
-        updateToggleLabel();
         await dd_load();
       } catch (e) {
         alert('DuckDNS timer change failed: ' + e.message);
@@ -503,15 +550,18 @@ _WIFI_HTML_TMPL = """
       }
     }
 
+    // wire buttons
+    document.getElementById('dd_btn_save').onclick = dd_save;
+    document.getElementById('dd_btn_run').onclick = dd_run;
+    document.getElementById('dd_btn_toggle').onclick = dd_toggle;
+
     // initial
     refreshStatus();
     dd_load();
     (function wan_loop(){
       fetch('/api/wanip',{cache:'no-store'}).then(r=>r.json()).then(j=>{
         document.getElementById('wan_ip').textContent = j.ip || '—';
-        const changedEl = document.getElementById('wan_changed');
-        changedEl.textContent = fmtLocal(j.changed_at);
-        changedEl.title = j.changed_at || '';
+        setTimeField('wan_changed', j.changed_at || null);
       }).catch(()=>{
         document.getElementById('wan_ip').textContent='(unavailable)';
         document.getElementById('wan_changed').textContent='(unavailable)';

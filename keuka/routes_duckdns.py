@@ -110,7 +110,7 @@ def _last_update() -> dict:
         if LAST.exists():
             txt = LAST.read_text(errors="replace")
             data["text"] = txt[-4000:]  # last ~4k chars
-            m = re.search(r"(\\d{4}-\\d{2}-\\d{2}T[0-9:+-]{5,})", txt)
+            m = re.search(r"(\d{4}-\d{2}-\d{2}T[0-9:+-]{5,})", txt)
             data["when"] = m.group(1) if m else None
     except Exception:
         pass
@@ -238,14 +238,67 @@ _DUCKDNS_HTML_TMPL = r"""<!doctype html>
 </div>
 
 <script>
+// --- robust local time formatter (handles ISO and systemd-ish strings) ---
+function tzAbbrevToOffset(abbr) {
+  const map = {
+    // zero-offset
+    UTC: "+0000", GMT: "+0000",
+    // UK/EU
+    BST: "+0100", CET: "+0100", CEST: "+0200",
+    // US
+    EST: "-0500", EDT: "-0400",
+    CST: "-0600", CDT: "-0500",
+    MST: "-0700", MDT: "-0600",
+    PST: "-0800", PDT: "-0700"
+  };
+  return map[abbr] || null;
+}
+
+function parseToDate(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+
+  // 1) ISO 8601? Let the browser parse it.
+  const d1 = new Date(s);
+  if (!isNaN(d1)) return d1;
+
+  // 2) systemd-style:
+  //    "Sun 2025-08-17 18:57:43 BST"  (weekday optional)
+  //    "2025-08-17 18:57:43 BST"
+  const m = s.match(/^(?:[A-Za-z]{3,9}\s+)?(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+([A-Za-z]{2,5})$/);
+  if (m) {
+    const off = tzAbbrevToOffset(m[3]);
+    if (off) {
+      const iso = `${m[1]}T${m[2]}${off.slice(0,3)}:${off.slice(3)}`; // RFC3339
+      const d2 = new Date(iso);
+      if (!isNaN(d2)) return d2;
+    }
+  }
+  return null;
+}
+
+function fmtLocal(raw) {
+  const d = parseToDate(raw);
+  if (!d) return raw || "—";
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(d);
+  } catch {
+    return d.toString();
+  }
+}
+
+function setTimeField(id, raw) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = fmtLocal(raw);
+  el.title = raw || '';
+}
+
+
 async function readJSONOrThrow(r) {
   const text = await r.text();
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    // Surface the first part of any HTML/text error (e.g., default error page)
-    throw new Error(text.slice(0, 200));
-  }
+  try { return JSON.parse(text); }
+  catch (e) { throw new Error(text.slice(0, 200)); }
 }
 
 async function loadStatus() {
@@ -254,7 +307,8 @@ async function loadStatus() {
 
   document.getElementById('svc').innerHTML = j.service_active ? '<span class="ok">running</span>' : '<span class="muted">inactive</span>';
   document.getElementById('tmr').innerHTML = (j.timer_enabled ? 'enabled' : 'disabled') + ' / ' + (j.timer_active ? 'active' : 'inactive');
-  document.getElementById('next').textContent = j.timer_next || '—';
+
+  setTimeField('next', j.timer_next || null);
 
   if (j.last_result === 'OK') {
     document.getElementById('last_res').innerHTML = '<span class="ok">OK</span>';
@@ -264,12 +318,13 @@ async function loadStatus() {
     document.getElementById('last_res').textContent = '—';
   }
 
-  document.getElementById('when').textContent = j.last && j.last.when ? j.last.when : '—';
+  setTimeField('when', (j.last && j.last.when) ? j.last.when : null);
 
   document.getElementById('svc_sub').textContent = j.service_substate || '—';
   document.getElementById('svc_code').textContent = (j.service_exec_status === null || j.service_exec_status === undefined) ? '—' : String(j.service_exec_status);
-  document.getElementById('svc_start').textContent = j.service_started_at || '—';
-  document.getElementById('svc_exit').textContent = j.service_exited_at || '—';
+
+  setTimeField('svc_start', j.service_started_at || null);
+  setTimeField('svc_exit',  j.service_exited_at  || null);
 
   document.getElementById('log').textContent = (j.last && j.last.text) ? j.last.text : '—';
 
