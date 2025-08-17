@@ -14,7 +14,7 @@ TRIG_PIN = 23            # Ultrasonic trigger pin
 ECHO_PIN = 24            # Ultrasonic echo pin
 TEMP_PIN = 6             # DS18B20 data pin (requires 1-Wire enabled in /boot/config.txt)
 ULTRASONIC_TIMEOUT_S = 0.04
-SAMPLES = 5
+SAMPLES = 11
 
 # GPIO (allow import on dev machines without raising)
 try:
