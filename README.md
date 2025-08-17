@@ -1,7 +1,4 @@
-# Production Design: Raspberry Pi 3A+ Water Temp & Level Node (v1.5.0, no-code edition)
-
-This document summarizes the complete build **without embedding file contents**. It references file names and paths that already exist in your GitHub repo. Use it as a handoff to builders and reviewers.
-
+# Production Design: Raspberry Pi 3A+ Water Temp & Level Sensor
 ---
 
 ## 0) Endpoints (compatibility preserved)
