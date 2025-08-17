@@ -109,12 +109,9 @@ Follow these connections to ensure reliable operation:
 ## 6) Provisioning AP (onboard wlan0)
 
 - **SSID**: `keukasensor`  
-- **Password**: `KeukaLake`  
+- **Password**: `keuka1234`  
 - **AP address**: `192.168.50.1`  
-- **Config files and exact content**: already in your repo. Place them at:
-  - `/etc/hostapd/hostapd.conf`
-  - `/etc/dnsmasq.d/keukasensor.conf`
-  - AP static IP lines in `/etc/dhcpcd.conf` for `wlan0`
+- AP static IP lines in `/etc/dhcpcd.conf` for `wlan0`
 - Enable services per your repo’s setup instructions. From iPhone: join AP → visit `http://192.168.50.1/admin` → Wi‑Fi setup for field SSID on `wlan1`.
 
 ---
