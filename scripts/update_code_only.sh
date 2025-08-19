@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# update_code_only.sh — code-only deploy for keuka/
-# VERSION: 2025-08-16T00:20Z
-
-# Replaces only APP_ROOT/keuka with STAGE_DIR/keuka and restarts SERVICE_NAME.
-# Detaches before stopping the service so it can complete even when called from within the service.
-# Writes the deployed commit SHA into both:
-#   - APP_ROOT/keuka/.keuka_commit
-#   - APP_ROOT/.keuka_commit
-# Uses a pending marker for GUI friendliness:
-#   - APP_ROOT/.keuka_commit.next  (written by parent before detach; removed by child on success)
+# update_code_only.sh — code-only deploy for keuka/ (PYTHON FILES ONLY, ALWAYS PRUNE)
+# VERSION: 2025-08-19T00:35Z
+#
+# What this does:
+#   - STOP the service
+#   - BACK UP only existing *.py files under APP_ROOT/keuka to keuka.pybak.TIMESTAMP/
+#   - COPY ONLY *.py files from STAGE_DIR/keuka into APP_ROOT/keuka (create dirs as needed)
+#   - ALWAYS prune local *.py that no longer exist in staged code (repo)
+#   - WRITE commit markers
+#   - RESTART the service, run a simple health check
+#
+# What it does NOT do:
+#   - It does NOT touch keuka/static or any other non-*.py content.
+#   - It does NOT move/overwrite the entire keuka/ directory.
 
 usage() {
   cat <<'USAGE'
 Usage: update_code_only.sh --stage <STAGE_DIR> --root <APP_ROOT> --service <SERVICE_NAME> [--commit <SHA>] [--apply]
 
-Replaces <APP_ROOT>/keuka with <STAGE_DIR>/keuka (backing up the current keuka/),
-then restarts the specified systemd service.
+Replaces ONLY the *.py files under <APP_ROOT>/keuka with those from <STAGE_DIR>/keuka,
+preserving non-Python files (e.g., static assets). Always prunes local *.py not present upstream.
+Restarts the specified systemd service.
 
 Environment variables (optional fallback):
   STAGE_DIR, APP_ROOT, SERVICE_NAME, COMMIT_SHA
@@ -64,12 +69,14 @@ if [[ -n "${COMMIT_SHA}" ]]; then
 fi
 
 KEUKA_CUR="${APP_ROOT}/keuka"
-KEUKA_BAK="${APP_ROOT}/keuka.bak.$(date +%Y%m%d-%H%M%S)"
 KEUKA_NEW="${STAGE_DIR}/keuka"
 PENDING_NEXT="${APP_ROOT}/.keuka_commit.next"
-
 if [[ ! -d "${KEUKA_NEW}" ]]; then
   echo "[update_code_only] ERROR: staged keuka/ not found at ${KEUKA_NEW}"
+  exit 2
+fi
+if [[ ! -d "${KEUKA_CUR}" ]]; then
+  echo "[update_code_only] ERROR: current keuka/ not found at ${KEUKA_CUR}"
   exit 2
 fi
 
@@ -89,12 +96,82 @@ write_markers() {
   fi
 }
 
-rollback() {
-  echo "[update_code_only] ROLLBACK: restoring previous keuka/ from ${KEUKA_BAK}"
-  rm -rf "${KEUKA_CUR}" || true
-  if [[ -d "${KEUKA_BAK}" ]]; then
-    mv "${KEUKA_BAK}" "${KEUKA_CUR}"
+# Back up current *.py files (relative tree) so we can roll back if needed
+BACKUP_DIR="${APP_ROOT}/keuka.pybak.$(date +%Y%m%d-%H%M%S)"
+backup_current_py() {
+  echo "[update_code_only] backing up current *.py files to ${BACKUP_DIR}"
+  local count=0
+  while IFS= read -r -d '' rel; do
+    local src="${KEUKA_CUR}/${rel}"
+    local dst="${BACKUP_DIR}/${rel}"
+    install -D -m 0644 "${src}" "${dst}" || true
+    count=$((count+1))
+  done < <(cd "${KEUKA_CUR}" && find . -type f -name "*.py" -print0)
+  echo "[update_code_only] backup saved (${count} files)."
+}
+
+restore_from_backup() {
+  if [[ ! -d "${BACKUP_DIR}" ]]; then
+    echo "[update_code_only] ROLLBACK: no backup dir found (${BACKUP_DIR})"
+    return 0
   fi
+  echo "[update_code_only] ROLLBACK: restoring *.py from ${BACKUP_DIR}"
+  local count=0
+  while IFS= read -r -d '' rel; do
+    local src="${BACKUP_DIR}/${rel}"
+    local dst="${KEUKA_CUR}/${rel}"
+    install -D -m 0644 "${src}" "${dst}" || true
+    chown pi:pi "${dst}" || true
+    count=$((count+1))
+  done < <(cd "${BACKUP_DIR}" && find . -type f -name "*.py" -print0)
+  echo "[update_code_only] ROLLBACK: restored ${count} files."
+}
+
+copy_python_files() {
+  echo "[update_code_only] installing new *.py files from snapshot (preserving static and non-*.py)"
+  local SRC_ROOT="${SNAP_DIR}/keuka"
+  local DST_ROOT="${KEUKA_CUR}"
+
+  local copied=0
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --chmod=F0644 --chown=pi:pi \
+      --include='*/' --include='*.py' --exclude='*' \
+      "${SRC_ROOT}/" "${DST_ROOT}/"
+    copied=$(cd "${SRC_ROOT}" && find . -type f -name '*.py' | wc -l | awk '{print $1}')
+  else
+    while IFS= read -r -d '' rel; do
+      rel="${rel#./}"
+      local src="${SRC_ROOT}/${rel}"
+      local dst="${DST_ROOT}/${rel}"
+      install -D -m 0644 "${src}" "${dst}"
+      chown pi:pi "${dst}" || true
+      copied=$((copied+1))
+    done < <(cd "${SRC_ROOT}" && find . -type f -name "*.py" -print0)
+  fi
+  echo "[update_code_only] copied/updated ${copied} *.py files."
+
+  # Clear old bytecode to avoid stale modules
+  find "${DST_ROOT}" -type d -name "__pycache__" -exec rm -rf {} + || true
+}
+
+prune_removed_py() {
+  echo "[update_code_only] pruning removed *.py (always on)"
+  local SRC_ROOT="${SNAP_DIR}/keuka"
+  local pruned=0
+  while IFS= read -r -d '' rel; do
+    rel="${rel#./}"
+    if [[ ! -f "${SRC_ROOT}/${rel}" ]]; then
+      rm -f "${KEUKA_CUR}/${rel}" || true
+      pruned=$((pruned+1))
+      echo "[update_code_only] pruned: ${rel}"
+    fi
+  done < <(cd "${KEUKA_CUR}" && find . -type f -name "*.py" -print0)
+  echo "[update_code_only] pruned ${pruned} files."
+}
+
+rollback() {
+  echo "[update_code_only] ROLLBACK starting..."
+  restore_from_backup
   systemctl daemon-reload || true
   if ! systemctl restart "${SERVICE_NAME}"; then
     echo "[update_code_only] ROLLBACK: restart failed; showing status/logs"
@@ -114,22 +191,10 @@ do_apply() {
   fi
   systemctl reset-failed "${SERVICE_NAME}" || true
 
-  if [[ -d "${KEUKA_CUR}" ]]; then
-    echo "[update_code_only] backing up current keuka/ to ${KEUKA_BAK}"
-    mv "${KEUKA_CUR}" "${KEUKA_BAK}"
-  else
-    echo "[update_code_only] no existing keuka/ to backup"
-  fi
-
-  echo "[update_code_only] installing new keuka/ from snapshot ${SNAP_DIR}"
-  cp -a "${SNAP_DIR}/keuka" "${KEUKA_CUR}"
-
+  backup_current_py
+  copy_python_files
+  prune_removed_py
   write_markers "${COMMIT_SHA:-}"
-
-  echo "[update_code_only] setting ownership and permissions"
-  chown -R pi:pi "${KEUKA_CUR}" || true
-  find "${KEUKA_CUR}" -type f -name "*.py" -exec chmod 0644 {} +
-  find "${KEUKA_CUR}" -type d -exec chmod 0755 {} +
 
   echo "[update_code_only] restarting service: ${SERVICE_NAME}"
   systemctl daemon-reload || true
@@ -178,7 +243,6 @@ if [[ "${RUN_APPLY}" -eq 0 ]]; then
     UNIT="keuka-apply-$(date +%s)"
     echo "[update_code_only] detaching via systemd-run unit ${UNIT}"
 
-    # Write a tiny launcher to avoid quoting pitfalls
     LAUNCH="$(mktemp /tmp/keuka_apply_launch_XXXXXX.sh)"
     cat > "${LAUNCH}" <<LAUNCH_EOF
 #!/usr/bin/env bash
