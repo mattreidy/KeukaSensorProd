@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 022
-# update_code_only.sh — code-only deploy for keuka/ (PYTHON FILES ONLY, ALWAYS PRUNE, VERBOSE)
-# VERSION: 2025-08-19T02:05Z
+# update_code_only.sh — code-only deploy for keuka/
+# PY FILES ONLY, PRESERVE STATIC, ALWAYS PRUNE, VERBOSE
+# VERSION: 2025-08-19T02:30Z
 
 usage() {
   cat <<'USAGE'
@@ -14,6 +15,8 @@ Restarts the specified systemd service.
 
 Environment variables (optional fallback):
   STAGE_DIR, APP_ROOT, SERVICE_NAME, COMMIT_SHA
+Optional for health check (if /admin/version is protected with Basic Auth):
+  KS_ADMIN_USER, KS_ADMIN_PASS
 USAGE
 }
 
@@ -127,7 +130,6 @@ copy_python_files() {
 
   local copied=0
   if command -v rsync >/dev/null 2>&1; then
-    # --ignore-times forces copy when mtimes/sizes confuse rsync; comment if undesired.
     rsync -aiv --ignore-times --chmod=F0644 --chown=pi:pi \
       --include='*/' --include='*.py' --exclude='*' \
       "${SRC_ROOT}/" "${DST_ROOT}/" | sed 's/^/[rsync] /'
@@ -147,6 +149,8 @@ copy_python_files() {
 
   # Clear old bytecode to avoid stale modules
   find "${DST_ROOT}" -type d -name "__pycache__" -exec rm -rf {} + || true
+  # Ensure directory perms look sane
+  find "${DST_ROOT}" -type d -exec chmod 0755 {} + || true
 }
 
 prune_removed_py() {
@@ -204,12 +208,17 @@ do_apply() {
     exit 3
   fi
 
+  # Optional health check (supports Basic Auth if vars are set)
   sleep 2
   if command -v curl >/dev/null 2>&1; then
     echo "[update_code_only] health check /admin/version (best-effort)"
+    CURL_AUTH=()
+    if [[ -n "${KS_ADMIN_USER:-}" && -n "${KS_ADMIN_PASS:-}" ]]; then
+      CURL_AUTH=(-u "${KS_ADMIN_USER}:${KS_ADMIN_PASS}")
+    fi
     ok=0
     for i in {1..12}; do
-      if curl -sf "http://127.0.0.1:5000/admin/version" >/dev/null; then
+      if curl -sf "${CURL_AUTH[@]}" "http://127.0.0.1:5000/admin/version" >/dev/null; then
         echo "[update_code_only] health OK"
         ok=1
         break
