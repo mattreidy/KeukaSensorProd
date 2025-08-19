@@ -373,7 +373,7 @@ def health():
         connectSSE();
       </script>
     """
-    return render_page("Keuka Sensor – Health", body, extra_head)
+    return render_page("Keuka Sensor V1.0 by Matt Reidy – Health", body, extra_head)
 
 # -------- JSON (programmatic/fallback) --------
 @health_bp.route("/health.json")
