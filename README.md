@@ -1,4 +1,7 @@
 # Production Design: Keuka Sensor (Water Temp & Level Sensor)
+![Keuka Sensor](docs/sensor.jpg)
+
+
 ---
 
 ## 0) Endpoints (compatibility preserved)
