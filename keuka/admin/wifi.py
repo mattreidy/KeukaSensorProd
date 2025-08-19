@@ -71,6 +71,7 @@ _WIFI_HTML_TMPL = """
     <a href="/admin/wifi"><strong>Wi-Fi</strong></a>
     <a href="/admin/update">Update Code</a>
     <a href="/admin/duckdns">DuckDNS</a>
+    <a href="/admin/terminal" target="_blank" rel="noopener">Open SSH Terminal</a>
   </div>
 
   <div class="grid" style="margin-top:.6rem">
