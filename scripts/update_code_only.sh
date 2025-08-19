@@ -248,6 +248,8 @@ if [[ "${RUN_APPLY}" -eq 0 ]]; then
     echo "[update_code_only] detaching via systemd-run unit ${UNIT}"
     # Execute THIS script directly; no ephemeral /tmp launch file.
     systemd-run --unit="${UNIT}" --collect \
+      --setenv=KS_ADMIN_USER="${KS_ADMIN_USER:-}" \
+      --setenv=KS_ADMIN_PASS="${KS_ADMIN_PASS:-}" \
       /bin/bash "$0" \
       --stage "${STAGE_DIR}" \
       --root  "${APP_ROOT}" \
