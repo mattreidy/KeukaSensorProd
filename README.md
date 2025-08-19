@@ -8,7 +8,7 @@
 
 - `GET /` → plain text: `waterTempF,medianDistanceInches` (two decimals).
 - `GET /health` → JSON with readings + status.
-- `GET /admin` (Basic Auth) → Update / Restart / Reboot; links to Wi‑Fi, Software Update, DuckDNS.
+- `GET /admin` (Basic Auth) → links to Wi‑Fi, Software Update, DuckDNS, Terminal
 
 Default admin credentials: **`admin/password`**.
 
@@ -26,7 +26,7 @@ Default admin credentials: **`admin/password`**.
 
 ## 2) Consolidated Bill of Materials (BoM)
 
-Estimated 2025  prices
+Estimated 2025 costs
 
 
 
@@ -87,9 +87,7 @@ Follow these connections to ensure reliable operation:
 
 - **SSID**: `keukasensor`  
 - **Password**: `keuka1234`  
-- **AP address**: `192.168.50.1`  
-- AP static IP lines in `/etc/dhcpcd.conf` for `wlan0`
-- Enable services per your repo’s setup instructions. From iPhone: join AP → visit `http://192.168.50.1/admin` → Wi‑Fi setup for field SSID on `wlan1`.
+- **AP address**: `192.168.50.1` 
 
 ---
 
@@ -100,13 +98,5 @@ Follow these connections to ensure reliable operation:
 - **DuckDNS updater**:  
   - `/etc/systemd/system/duckdns-update.service`  
   - `/etc/systemd/system/duckdns-update.timer` (5‑minute interval)
-
----
-
-## 7) Static vs DHCP (Admin → Network)
-
-- The app manages a **delimited block** in `/etc/dhcpcd.conf` to switch `wlan1` between **DHCP** and **Static** IPv4.  
-- **Admin → Network** shows live info (SSID, RSSI, IP/CIDR, Gateway, DNS) and applies changes.  
-- If you change the IP while connected via STA, reconnect using the AP at `http://192.168.50.1/admin`.
 
 ---
