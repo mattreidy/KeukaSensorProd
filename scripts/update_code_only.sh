@@ -74,7 +74,9 @@ if [[ ! -d "${KEUKA_CUR}" ]]; then
 fi
 
 # Snapshot staged payload to avoid races (KEEP IT for debug)
-SNAP_DIR="$(mktemp -d /tmp/keuka_apply_XXXXXX)"
+SNAP_BASE="${APP_ROOT}/tmp"
+mkdir -p "${SNAP_BASE}"
+SNAP_DIR="$(mktemp -d "${SNAP_BASE}/keuka_apply_XXXXXX")"
 echo "[update_code_only] snapshotting staged code to ${SNAP_DIR}"
 cp -a "${KEUKA_NEW}" "${SNAP_DIR}/"   # -> ${SNAP_DIR}/keuka
 echo "[update_code_only] SNAP_DIR kept at: ${SNAP_DIR}"
@@ -248,6 +250,7 @@ if [[ "${RUN_APPLY}" -eq 0 ]]; then
     echo "[update_code_only] detaching via systemd-run unit ${UNIT}"
     # Execute THIS script directly; no ephemeral /tmp launch file.
     systemd-run --unit="${UNIT}" --collect \
+      --property=PrivateTmp=no \
       --setenv=KS_ADMIN_USER="${KS_ADMIN_USER:-}" \
       --setenv=KS_ADMIN_PASS="${KS_ADMIN_PASS:-}" \
       /bin/bash "$0" \
