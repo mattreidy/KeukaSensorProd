@@ -3,20 +3,23 @@ set -euo pipefail
 umask 022
 # update_code_only.sh — code-only deploy for keuka/
 # PY FILES ONLY, PRESERVE STATIC, ALWAYS PRUNE, VERBOSE
-# VERSION: 2025-08-19T02:30Z
+# VERSION: 2025-08-19T02:55Z
 
 usage() {
   cat <<'USAGE'
-Usage: update_code_only.sh --stage <STAGE_DIR> --root <APP_ROOT> --service <SERVICE_NAME> [--commit <SHA>] [--apply]
+Usage: update_code_only.sh --root <APP_ROOT> --service <SERVICE_NAME> [--stage <STAGE_DIR>] [--commit <SHA>] [--apply]
 
-Replaces ONLY the *.py files under <APP_ROOT>/keuka with those from <STAGE_DIR>/keuka,
+Replaces ONLY the *.py files under <APP_ROOT>/keuka with those from a snapshot of <STAGE_DIR>/keuka,
 preserving non-Python files (e.g., static assets). Always prunes local *.py not present upstream.
-Restarts the specified systemd service.
+If SNAP_DIR is provided (env), the script REUSES that snapshot and does not require --stage.
 
-Environment variables (optional fallback):
-  STAGE_DIR, APP_ROOT, SERVICE_NAME, COMMIT_SHA
-Optional for health check (if /admin/version is protected with Basic Auth):
-  KS_ADMIN_USER, KS_ADMIN_PASS
+Environment variables:
+  SNAP_DIR         If set to a directory containing keuka/ it will be used instead of --stage
+  KS_ADMIN_USER    Optional for /admin/version health check
+  KS_ADMIN_PASS    Optional for /admin/version health check
+
+Detaching:
+  Parent writes a snapshot & then detaches via systemd-run with SNAP_DIR in the environment.
 USAGE
 }
 
@@ -41,43 +44,60 @@ STAGE_DIR="${STAGE_DIR_ARG:-${STAGE_DIR:-}}"
 APP_ROOT="${APP_ROOT_ARG:-${APP_ROOT:-}}"
 SERVICE_NAME="${SERVICE_ARG:-${SERVICE_NAME:-}}"
 COMMIT_SHA="${COMMIT_ARG:-${COMMIT_SHA:-}}"
+SNAP_DIR="${SNAP_DIR:-}"
 
-if [[ -z "${STAGE_DIR}" || -z "${APP_ROOT}" || -z "${SERVICE_NAME}" ]]; then
-  echo "[update_code_only] ERROR: STAGE_DIR/APP_ROOT/SERVICE_NAME are required."
+if [[ -z "${APP_ROOT}" || -z "${SERVICE_NAME}" ]]; then
+  echo "[update_code_only] ERROR: APP_ROOT and SERVICE_NAME are required."
+  usage; exit 2
+fi
+# Require either a stage dir (to create a snapshot) OR an existing snapshot
+if [[ -z "${STAGE_DIR}" && -z "${SNAP_DIR}" ]]; then
+  echo "[update_code_only] ERROR: Provide --stage <STAGE_DIR> or set SNAP_DIR."
   usage; exit 2
 fi
 
 LOG_DIR="${APP_ROOT}/logs"
 UPDATER_LOG="${LOG_DIR}/updater.log"
 mkdir -p "${LOG_DIR}"
+# Log only to file (more reliable under systemd)
 exec >> "${UPDATER_LOG}" 2>&1
 
 echo "[update_code_only] starting..."
-echo "[update_code_only] STAGE_DIR=${STAGE_DIR}"
+echo "[update_code_only] RUN_APPLY=${RUN_APPLY}"
 echo "[update_code_only] APP_ROOT=${APP_ROOT}"
 echo "[update_code_only] SERVICE_NAME=${SERVICE_NAME}"
-if [[ -n "${COMMIT_SHA}" ]]; then
-  echo "[update_code_only] commit=${COMMIT_SHA}"
-fi
+[[ -n "${COMMIT_SHA}" ]] && echo "[update_code_only] commit=${COMMIT_SHA}"
+[[ -n "${STAGE_DIR}" ]] && echo "[update_code_only] STAGE_DIR=${STAGE_DIR}"
+[[ -n "${SNAP_DIR}"  ]] && echo "[update_code_only] SNAP_DIR(pre)=${SNAP_DIR}"
 
 KEUKA_CUR="${APP_ROOT}/keuka"
-KEUKA_NEW="${STAGE_DIR}/keuka"
 PENDING_NEXT="${APP_ROOT}/.keuka_commit.next"
 
-if [[ ! -d "${KEUKA_NEW}" ]]; then
-  echo "[update_code_only] ERROR: staged keuka/ not found at ${KEUKA_NEW}"
-  exit 2
-fi
 if [[ ! -d "${KEUKA_CUR}" ]]; then
   echo "[update_code_only] ERROR: current keuka/ not found at ${KEUKA_CUR}"
   exit 2
 fi
 
-# Snapshot staged payload to avoid races (KEEP IT for debug)
-if [[ -n "${SNAP_DIR:-}" && -d "${SNAP_DIR}/keuka" ]]; then
-  echo "[update_code_only] reusing existing SNAP_DIR: ${SNAP_DIR}"
-else
-  SNAP_BASE="${APP_ROOT}/tmp"
+# ----- Build or reuse snapshot -----
+build_or_reuse_snapshot() {
+  if [[ -n "${SNAP_DIR}" && -d "${SNAP_DIR}/keuka" ]]; then
+    echo "[update_code_only] reusing existing SNAP_DIR: ${SNAP_DIR}"
+    chmod -R a+rx "${SNAP_DIR}" || true
+    return 0
+  fi
+
+  if [[ -z "${STAGE_DIR}" ]]; then
+    echo "[update_code_only] ERROR: SNAP_DIR not valid and no STAGE_DIR provided."
+    exit 2
+  fi
+
+  local KEUKA_NEW="${STAGE_DIR}/keuka"
+  if [[ ! -d "${KEUKA_NEW}" ]]; then
+    echo "[update_code_only] ERROR: staged keuka/ not found at ${KEUKA_NEW}"
+    exit 2
+  fi
+
+  local SNAP_BASE="${APP_ROOT}/tmp"
   mkdir -p "${SNAP_BASE}"
   SNAP_DIR="$(mktemp -d "${SNAP_BASE}/keuka_apply_XXXXXX")"
   echo "[update_code_only] snapshotting staged code to ${SNAP_DIR}"
@@ -85,7 +105,7 @@ else
   echo "[update_code_only] SNAP_DIR kept at: ${SNAP_DIR}"
   chmod -R a+rx "${SNAP_DIR}" || true
   export SNAP_DIR
-fi
+}
 
 write_markers() {
   local sha="$1"
@@ -129,8 +149,8 @@ restore_from_backup() {
 
 copy_python_files() {
   if [[ ! -f "${SNAP_DIR}/keuka/app.py" ]]; then
-  echo "[update_code_only] ERROR: snapshot missing keuka/app.py at ${SNAP_DIR}/keuka"
-  exit 3
+    echo "[update_code_only] ERROR: snapshot missing keuka/app.py at ${SNAP_DIR}/keuka"
+    exit 3
   fi
   echo "[update_code_only] BEGIN:SOURCE_LIST"
   ( cd "${SNAP_DIR}/keuka" && find . -type f -name '*.py' -print | sort )
@@ -163,6 +183,13 @@ copy_python_files() {
   find "${DST_ROOT}" -type d -name "__pycache__" -exec rm -rf {} + || true
   # Ensure directory perms look sane
   find "${DST_ROOT}" -type d -exec chmod 0755 {} + || true
+
+  # Proof-of-apply check
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "[update_code_only] verify app.py hash (src vs dst)"
+    sha256sum "${SNAP_DIR}/keuka/app.py" || true
+    sha256sum "${KEUKA_CUR}/app.py" || true
+  fi
 }
 
 prune_removed_py() {
@@ -194,6 +221,7 @@ rollback() {
 do_apply() {
   set -euo pipefail
   echo "[update_code_only] (apply) begin"
+  echo "[update_code_only] using SNAP_DIR=${SNAP_DIR}"
 
   echo "[update_code_only] stopping service: ${SERVICE_NAME}"
   systemctl daemon-reload || true
@@ -248,7 +276,10 @@ do_apply() {
   echo "[update_code_only] (apply) done."
 }
 
-# ----- Parent path: write pending marker and detach properly (no temp launcher) -----
+# ----- Build/reuse snapshot now -----
+build_or_reuse_snapshot
+
+# ----- Parent path: write pending marker and detach (no temp launcher) -----
 if [[ "${RUN_APPLY}" -eq 0 ]]; then
   if [[ -n "${COMMIT_SHA:-}" ]]; then
     echo "${COMMIT_SHA}" > "${PENDING_NEXT}" || true
@@ -258,14 +289,12 @@ if [[ "${RUN_APPLY}" -eq 0 ]]; then
   if command -v systemd-run >/dev/null 2>&1; then
     UNIT="keuka-apply-$(date +%s)"
     echo "[update_code_only] detaching via systemd-run unit ${UNIT}"
-    # Execute THIS script directly; no ephemeral /tmp launch file.
     systemd-run --unit="${UNIT}" --collect \
       --property=PrivateTmp=no \
       --setenv=KS_ADMIN_USER="${KS_ADMIN_USER:-}" \
       --setenv=KS_ADMIN_PASS="${KS_ADMIN_PASS:-}" \
       --setenv=SNAP_DIR="${SNAP_DIR}" \
       /bin/bash "$0" \
-      --stage "${STAGE_DIR}" \
       --root  "${APP_ROOT}" \
       --service "${SERVICE_NAME}" \
       --commit "${COMMIT_SHA}" \
@@ -274,8 +303,8 @@ if [[ "${RUN_APPLY}" -eq 0 ]]; then
   fi
 
   echo "[update_code_only] detaching via nohup background subshell"
-  nohup /bin/bash -lc \
-    "$(printf '%q' "$0") --stage $(printf '%q' "${STAGE_DIR}") --root $(printf '%q' "${APP_ROOT}") --service $(printf '%q' "${SERVICE_NAME}") --commit $(printf '%q' "${COMMIT_SHA}") --apply" >/dev/null 2>&1 &
+  nohup env SNAP_DIR="${SNAP_DIR}" /bin/bash -lc \
+    "$(printf '%q' "$0") --root $(printf '%q' "${APP_ROOT}") --service $(printf '%q' "${SERVICE_NAME}") --commit $(printf '%q' "${COMMIT_SHA}") --apply" >/dev/null 2>&1 &
   disown || true
   exit 0
 fi

@@ -1,5 +1,5 @@
-# app.py v21
-# -----------------------------------------------------------------------------
+# app.py v22
+# ----------------------------------------------------------------------------
 # Application factory for the Keuka Sensor web app.
 # - Creates a Flask app instance.
 # - Registers all route blueprints (root, webcam, admin, health, duckdns).
