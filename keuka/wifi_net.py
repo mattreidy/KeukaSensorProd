@@ -10,6 +10,7 @@ import os
 import re
 import time
 import ipaddress
+import json
 from pathlib import Path
 from typing import Optional, List
 
@@ -216,11 +217,55 @@ def wifi_connect(ssid: str, psk: str) -> tuple[bool, str, dict]:
 # ---- IPv4 info & config ----------------------------------------------------
 
 def ip_addr4(iface: str) -> Optional[str]:
+    """
+    Return the preferred IPv4/CIDR for an interface.
+    Prefers a GLOBAL, non-deprecated address (static over dynamic when both exist).
+    Falls back to the last 'inet' match if JSON isn't available.
+    """
+    # Prefer JSON so we can rank multiple addresses sensibly
+    code, out = sh(["/sbin/ip", "-j", "-4", "addr", "show", "dev", iface])
+    if code == 0 and out.strip():
+        try:
+            data = json.loads(out)
+            candidates: list[tuple[int, dict]] = []
+            for ifo in data:
+                for a in ifo.get("addr_info", []):
+                    if a.get("family") != "inet":
+                        continue
+                    # Score: global > link, static > dynamic, non-deprecated preferred
+                    score = 0
+                    if a.get("scope") == "global":
+                        score += 10
+                    if not a.get("dynamic", False):
+                        score += 2
+                    if not a.get("deprecated", False):
+                        score += 1
+                    # Prefer addresses whose preferred lifetime isn't zero
+                    plt = a.get("preferred_life_time", a.get("preferred_lft"))
+                    try:
+                        if plt is None or int(plt) != 0:
+                            score += 1
+                    except Exception:
+                        pass
+                    candidates.append((score, a))
+            if candidates:
+                candidates.sort(key=lambda t: t[0], reverse=True)
+                a = candidates[0][1]
+                local = a.get("local")
+                prefix = a.get("prefixlen")
+                if local and prefix is not None:
+                    return f"{local}/{prefix}"
+        except Exception:
+            pass
+
+    # Fallback: parse plain text; prefer the LAST match (newest address usually last)
     code, out = sh(["/sbin/ip", "-4", "-o", "addr", "show", "dev", iface])
     if code != 0:
         return None
-    m = re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+/\d+)", out)
-    return m.group(1) if m else None
+    matches = re.findall(r"inet\s+(\d+\.\d+\.\d+\.\d+/\d+)", out)
+    if matches:
+        return matches[-1]
+    return None
 
 def gw4(iface: str) -> Optional[str]:
     code, out = sh(["/sbin/ip", "route", "show", "default", "dev", iface])
@@ -269,10 +314,20 @@ def dhcpcd_render(mode: str, ip_cidr: str = "", router: str = "", dns_list: list
     return base2 + block
 
 def _apply_dhcpcd(mode: str, ip_cidr: str = "", router: str = "", dns_list: list[str] | None = None) -> tuple[bool, str]:
+    """
+    Write dhcpcd.conf and restart the service.
+    To avoid stale/secondary IPv4s lingering on the STA iface after mode changes,
+    we flush existing IPv4s on the STA before restarting dhcpcd.
+    """
     new_text = dhcpcd_render(mode, ip_cidr, router, dns_list or [])
     ok = write_text_atomic(DHCPCD_CONF, new_text, sudo_mv=True)
     if not ok:
         return False, "Failed to write /etc/dhcpcd.conf (sudo mv)"
+
+    # Flush old IPv4s on STA so the kernel doesn't keep the previous address around
+    # (Linux can keep multiple inet addresses; flushing avoids stale GUI reads)
+    sh(["sudo", "/sbin/ip", "-4", "addr", "flush", "dev", WLAN_STA_IFACE])
+
     code, out = sh(["sudo", "/bin/systemctl", "restart", "dhcpcd"])
     if code != 0:
         return False, "Failed to restart dhcpcd: " + out
