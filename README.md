@@ -1,4 +1,4 @@
-# Production Design: Keuka Sensor (Water Temp & Level Sensor)
+# Keuka Sensor by Matt Reidy
 ![Keuka Sensor](docs/sensor.jpg)
 
 
