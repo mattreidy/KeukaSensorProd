@@ -15,12 +15,11 @@ Default admin credentials: **`admin/password`**.
 ---
 
 ## 1) High‑level overview
-
+- Raspberry Pi micro-controller.
 - Measures **water level** (down‑looking ultrasonic) and **water temperature** (DS18B20 at lake bottom).
-- Streams a **USB UVC webcam** for situational awareness.
-- **Provisioning AP** for iPhone setup: onboard Wi‑Fi (**wlan0**) advertises `keukasensor` / `KeukaLake` at `192.168.50.1`.
+- Streams a **webcam** for situational awareness.
+- **Provisioning AP** for setup via mobile device (phone): onboard Wi‑Fi (**wlan0**) advertises `keukasensor` at `192.168.50.1`.
 - Field link uses a **USB 2.4 GHz Wi‑Fi adapter with external RP‑SMA antenna** on **wlan1** for range.
-- Robustness: managed by **systemd** (auto‑restart), optional **Wi‑Fi watchdog**, median filtering/timeouts, no custom PCBs.
 
 ---
 
