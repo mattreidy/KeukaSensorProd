@@ -272,7 +272,16 @@ do_apply() {
     fi
   fi
 
+  # ...existing health-check and marker removal...
   rm -f "${PENDING_NEXT}" || true
+
+  # NEW: remove the snapshot to avoid filling disk
+  if [[ -n "${SNAP_DIR}" && -d "${SNAP_DIR}" ]]; then
+    rm -rf "${SNAP_DIR}" \
+      && echo "[update_code_only] cleaned snapshot ${SNAP_DIR}" \
+      || echo "[update_code_only] NOTE: could not remove snapshot ${SNAP_DIR}"
+  fi
+
   echo "[update_code_only] (apply) done."
 }
 

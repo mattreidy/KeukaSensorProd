@@ -35,8 +35,32 @@ _STATE_IDLE = "idle"
 _STATE_RUNNING = "running"
 _STATE_SUCCESS = "success"
 _STATE_ERROR = "error"
-_STATE_CANCELED = "canceled"
 
+def _sweep_leftovers(self) -> None:
+    """Prune old staged/apply dirs to avoid slow disk creep."""
+    now = time.time()
+
+    def sweep_dir(root: str, prefix: str, max_age_secs: int = 6 * 3600) -> None:
+        try:
+            for name in os.listdir(root):
+                if not name.startswith(prefix):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    st = os.stat(path)
+                    if now - st.st_mtime > max_age_secs:
+                        shutil.rmtree(path, ignore_errors=True)
+                        self._log(f"Swept leftover snapshot: {path}")
+                except Exception:
+                    # best-effort; ignore
+                    pass
+        except FileNotFoundError:
+            pass
+
+    # SNAP_DIRs live under APP_ROOT/tmp/keuka_apply_*
+    sweep_dir(os.path.join(APP_ROOT, "tmp"), "keuka_apply_")
+    # Updater workdirs (already cleaned) — belt & suspenders
+    sweep_dir("/tmp", "keuka_update_")
 
 def _append_log_file(line: str) -> None:
     try:
@@ -291,6 +315,13 @@ class UpdateManager:
                     self._log("Cleaned up temporary files.")
             except Exception as e:
                 self._log(f"WARNING: temp cleanup failed: {e}")
+
+            # NEW: sweep any old snapshots that might have been left behind
+            try:
+                self._sweep_leftovers()
+            except Exception as e:
+                self._log(f"WARNING: sweep leftovers failed: {e}")
+
             self._finish(ok)
 
     def _run_cmd(self, cmd: List[str], cwd: Optional[str] = None, env: Optional[dict] = None) -> Tuple[int, str]:
