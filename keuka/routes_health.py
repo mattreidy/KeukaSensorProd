@@ -9,9 +9,10 @@
 import json
 import time
 import re
+import ast
 from pathlib import Path
 from datetime import datetime, timedelta
-from flask import Blueprint, Response
+from flask import Blueprint, Response, request
 
 from ui import render_page
 from utils import utcnow_str, read_text
@@ -20,12 +21,79 @@ from config import (
     TEMP_WARN_F, TEMP_CRIT_F, RSSI_WARN_DBM, RSSI_CRIT_DBM,
     CPU_TEMP_WARN_C, CPU_TEMP_CRIT_C,
 )
+import config as _config  # to get the on-disk path for read/write
 from camera import camera
 from sensors import read_temp_fahrenheit, median_distance_inches
 from wifi_net import wifi_status, ip_addr4, gw4, dns_servers
 from system_diag import cpu_temp_c, uptime_seconds, disk_usage_root, mem_usage
 
 health_bp = Blueprint("health", __name__)
+
+# ---- contact persistence helpers (keep all logic here; config.py is data-only) ----
+_CONFIG_PATH = Path(_config.__file__).resolve()
+
+def _cfg_text() -> str:
+    try:
+        return _CONFIG_PATH.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+def _extract_assign(src: str, key: str, default: str = "") -> str:
+    m = re.search(rf'^\s*{re.escape(key)}\s*=\s*(.+?)\s*$', src, re.M)
+    if not m:
+        return default
+    lit = m.group(1)
+    try:
+        val = ast.literal_eval(lit)
+        return str(val)
+    except Exception:
+        return default
+
+def contact_get() -> dict:
+    txt = _cfg_text()
+    return {
+        "name":    _extract_assign(txt, "CONTACT_NAME",    ""),
+        "address": _extract_assign(txt, "CONTACT_ADDRESS", ""),
+        "phone":   _extract_assign(txt, "CONTACT_PHONE",   ""),
+        "email":   _extract_assign(txt, "CONTACT_EMAIL",   ""),
+        "notes":   _extract_assign(txt, "CONTACT_NOTES",   ""),
+    }
+
+def contact_set(info: dict) -> None:
+    def _s(val: object, maxlen: int) -> str:
+        try:
+            s = str(val) if val is not None else ""
+        except Exception:
+            s = ""
+        s = s.replace("\r\n", "\n").replace("\r", "\n")
+        return s[:maxlen]
+
+    new_vals = {
+        "CONTACT_NAME":    _s(info.get("name"),    200),
+        "CONTACT_ADDRESS": _s(info.get("address"), 2000),
+        "CONTACT_PHONE":   _s(info.get("phone"),   100),
+        "CONTACT_EMAIL":   _s(info.get("email"),   320),
+        "CONTACT_NOTES":   _s(info.get("notes"),   5000),
+    }
+
+    src = _cfg_text()
+    if not src:
+        # If we couldn't read, do nothing (caller will handle error reporting).
+        raise RuntimeError("Unable to read config.py")
+
+    def _replace_line(src_txt: str, key: str, value: str) -> str:
+        pattern = re.compile(rf'^\s*{re.escape(key)}\s*=\s*.*$', re.M)
+        repl = f"{key} = {repr(value)}"
+        if pattern.search(src_txt):
+            return pattern.sub(repl, src_txt)
+        return src_txt.rstrip() + f"\n{repl}\n"
+
+    for k, v in new_vals.items():
+        src = _replace_line(src, k, v)
+
+    tmp = _CONFIG_PATH.with_suffix(".tmp")
+    tmp.write_text(src, encoding="utf-8")
+    tmp.replace(_CONFIG_PATH)  # atomic on POSIX
 
 def hostapd_info(conf_path: str = "/etc/hostapd/hostapd.conf") -> dict:
     """Best-effort parse of hostapd.conf so we can show AP SSID/channel."""
@@ -114,6 +182,7 @@ def build_health_payload() -> dict:
             "cpu_warn_c": CPU_TEMP_WARN_C,
             "cpu_crit_c": CPU_TEMP_CRIT_C,
         },
+        "contact": contact_get(),
     }
 
 # -------- HTML dashboard --------
@@ -200,6 +269,44 @@ def health():
         </div>
       </div>
 
+      <div class="card" style="margin-top:1rem; max-width:500px">
+        <h3 style="margin-top:0">Sensor Contact</h3>
+        <form onsubmit="saveContact(event)" class="flex" style="flex-direction:column; gap:.8rem">
+          
+          <div>
+            <label for="c_name"><b>Name</b></label>
+            <input id="c_name" type="text" placeholder="Name" style="width:100%" />
+          </div>
+          
+          <div>
+            <label for="c_address"><b>Address</b></label>
+            <textarea id="c_address" rows="2" placeholder="Street, City, State, ZIP" style="width:100%"></textarea>
+          </div>
+          
+          <div>
+            <label for="c_phone"><b>Phone</b></label>
+            <input id="c_phone" type="text" placeholder="+1 ..." style="width:100%" />
+          </div>
+          
+          <div>
+            <label for="c_email"><b>Email</b></label>
+            <input id="c_email" type="email" placeholder="you@example.com" style="width:100%" />
+          </div>
+          
+          <div>
+            <label for="c_notes"><b>Notes</b></label>
+            <textarea id="c_notes" rows="5" placeholder="Free-form notes..." style="width:100%"></textarea>
+          </div>
+          
+          <div class="flex" style="gap:.6rem; align-items:center">
+            <button id="c_save" class="btn" type="submit">Save</button>
+            <span id="c_status" class="muted"></span>
+          </div>
+        
+        </form>
+      </div>
+
+
       <div class="card" style="margin-top:1rem">
         <div class="flex"><strong>Raw JSON</strong><button class="btn" onclick="copyJSON()">Copy</button><span id="copynote" class="muted"></span></div>
         <pre id="rawjson" class="mono" style="white-space:pre-wrap;margin-top:.4rem"></pre>
@@ -207,6 +314,7 @@ def health():
 
       <script>
         // ---- helpers ----
+        let contactInitialized = false;
         function fmt(v, fallback="(n/a)") {{ return (v===null||v===undefined||v==="") ? fallback : v; }}
         function bytes(n) {{
           if (n===0) return "0 B";
@@ -221,7 +329,7 @@ def health():
           if (dbm===null || dbm===undefined) return "(n/a)";
           const v = Number(dbm);
           let bars = 0;
-          if (v >= -50) bars = 5; else if (v >= -60) bars = 4; else if (v >= -67) bars = 3; else if (v >= -75) bars = 2; else if (v >= -82) bars = 1; else bars = 0;
+          if (v >= -50) bars = 5; else if (v >= -60) bars = 4; else if (v >= -67) bars = 3; else if (v >= -75) bars = 2; else bars = 0;
           const spans = Array.from({{length:5}}, (_,i)=>`<span class="${{i<bars?"on":""}}" style="height:${{4+i*2}}px"></span>`).join("");
           return `<span class="bars" title="${{v}} dBm">${{spans}}</span><span class="muted"> ${{v}} dBm</span>`;
         }}
@@ -256,6 +364,49 @@ def health():
           el.textContent = "Updated " + (secs===0 ? "just now" : secs + "s ago");
         }}
         setInterval(tickAgo, 1000);
+
+        // ---- contact form helpers ----
+        function setContactForm(c) {{
+          document.getElementById('c_name').value = c?.name || "";
+          document.getElementById('c_address').value = c?.address || "";
+          document.getElementById('c_phone').value = c?.phone || "";
+          document.getElementById('c_email').value = c?.email || "";
+          document.getElementById('c_notes').value = c?.notes || "";
+        }}
+        async function saveContact(e) {{
+          e.preventDefault();
+          const btn = document.getElementById('c_save');
+          const status = document.getElementById('c_status');
+          btn.disabled = true; status.textContent = "Saving...";
+          try {{
+            const payload = {{
+              name: document.getElementById('c_name').value,
+              address: document.getElementById('c_address').value,
+              phone: document.getElementById('c_phone').value,
+              email: document.getElementById('c_email').value,
+              notes: document.getElementById('c_notes').value,
+            }};
+            const r = await fetch('/health/contact', {{
+              method: 'POST',
+              headers: {{ 'Content-Type': 'application/json' }},
+              body: JSON.stringify(payload),
+            }});
+            const j = await r.json();
+            if (j && j.ok) {{
+              setContactForm(j.contact || {{}});
+              contactInitialized = true;
+              status.textContent = "Saved.";
+              lastUpdateEpoch = Date.now(); tickAgo();
+              setTimeout(()=>{{ status.textContent = ""; }}, 1500);
+            }} else {{
+              status.textContent = "Save failed.";
+            }}
+          }} catch (_e) {{
+            status.textContent = "Save error.";
+          }} finally {{
+            btn.disabled = false;
+          }}
+        }}
 
         // ---- main render ----
         function render(data) {{
@@ -343,6 +494,12 @@ def health():
           const th = document.getElementById('thumb');
           if (th && th.style.display!=="none") {{ th.src = "/snapshot?cb=" + Date.now(); }}
 
+          // Contact (populate only once; do not overwrite user edits during live refreshes)
+          if (!contactInitialized) {{
+            setContactForm(data.contact || {{}});
+            contactInitialized = true;
+          }}
+
           lastUpdateEpoch = Date.now(); tickAgo();
         }}
 
@@ -402,3 +559,24 @@ def health_sse():
         "Connection": "keep-alive",
     }
     return Response(stream(), headers=headers)
+
+# -------- Contact info API (persisted to config.py) --------
+@health_bp.route("/health/contact", methods=["GET", "POST"])
+def health_contact():
+    if request.method == "GET":
+        return {"ok": True, "contact": contact_get()}
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        info = {
+            "name": payload.get("name", ""),
+            "address": payload.get("address", ""),
+            "phone": payload.get("phone", ""),
+            "email": payload.get("email", ""),
+            "notes": payload.get("notes", ""),
+        }
+        contact_set(info)
+        # Return the freshly read (on-disk) values
+        return {"ok": True, "contact": contact_get()}
+    except Exception:
+        # Even if persisting fails, return current on-disk view so UI can recover.
+        return {"ok": False, "contact": contact_get()}, 500

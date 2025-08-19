@@ -46,4 +46,13 @@ CPU_TEMP_WARN_C = float(os.environ.get("KS_CPU_WARN_C", "75"))
 CPU_TEMP_CRIT_C = float(os.environ.get("KS_CPU_CRIT_C", "85"))
 
 # App
-VERSION = "1.6.0"
+VERSION = "unused"
+
+# -----------------------------------------------------------------------------
+# Contact info (data only; logic to read/write lives in routes_health.py)
+# -----------------------------------------------------------------------------
+CONTACT_NAME    = ""
+CONTACT_ADDRESS = ""
+CONTACT_PHONE   = ""
+CONTACT_EMAIL   = ""
+CONTACT_NOTES   = ""

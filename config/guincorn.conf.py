@@ -1,9 +1,0 @@
-bind = "0.0.0.0:5000"
-workers = 2          # Pi 3A+ is single-core; 2 workers is a nice balance for SSE + page loads
-threads = 2
-worker_class = "gthread"
-timeout = 60
-graceful_timeout = 30
-keepalive = 30
-accesslog = "-"
-errorlog = "-"
