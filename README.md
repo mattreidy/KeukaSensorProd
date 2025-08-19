@@ -1,4 +1,4 @@
-# Keuka Sensor by Matt Reidy
+# Keuka Sensor by Matt Reidy © 2025 - All rights reserved.
 ![Keuka Sensor](docs/sensor.jpg)
 
 
