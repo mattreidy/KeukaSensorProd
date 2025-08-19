@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 022
 # update_code_only.sh — code-only deploy for keuka/ (PYTHON FILES ONLY, ALWAYS PRUNE, VERBOSE)
-# VERSION: 2025-08-19T01:25Z
+# VERSION: 2025-08-19T02:05Z
 
 usage() {
   cat <<'USAGE'
@@ -10,7 +10,7 @@ Usage: update_code_only.sh --stage <STAGE_DIR> --root <APP_ROOT> --service <SERV
 
 Replaces ONLY the *.py files under <APP_ROOT>/keuka with those from <STAGE_DIR>/keuka,
 preserving non-Python files (e.g., static assets). Always prunes local *.py not present upstream.
-Logs staged and copied files verbosely. Leaves snapshot dir for debugging.
+Restarts the specified systemd service.
 
 Environment variables (optional fallback):
   STAGE_DIR, APP_ROOT, SERVICE_NAME, COMMIT_SHA
@@ -28,7 +28,7 @@ while [[ $# -gt 0 ]]; do
     --service) SERVICE_ARG="${2:-}";   shift 2 ;;
     --commit)  COMMIT_ARG="${2:-}";    shift 2 ;;
     --apply)   RUN_APPLY=1; shift ;;
-    __run_apply__) RUN_APPLY=1; shift ;;
+    __run_apply__) RUN_APPLY=1; shift ;;  # backward-compat
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1"; usage; exit 2 ;;
   esac
@@ -53,21 +53,28 @@ echo "[update_code_only] starting..."
 echo "[update_code_only] STAGE_DIR=${STAGE_DIR}"
 echo "[update_code_only] APP_ROOT=${APP_ROOT}"
 echo "[update_code_only] SERVICE_NAME=${SERVICE_NAME}"
-[[ -n "${COMMIT_SHA}" ]] && echo "[update_code_only] commit=${COMMIT_SHA}"
+if [[ -n "${COMMIT_SHA}" ]]; then
+  echo "[update_code_only] commit=${COMMIT_SHA}"
+fi
 
 KEUKA_CUR="${APP_ROOT}/keuka"
 KEUKA_NEW="${STAGE_DIR}/keuka"
 PENDING_NEXT="${APP_ROOT}/.keuka_commit.next"
-[[ -d "${KEUKA_NEW}" ]] || { echo "[update_code_only] ERROR: staged keuka/ not found at ${KEUKA_NEW}"; exit 2; }
-[[ -d "${KEUKA_CUR}" ]] || { echo "[update_code_only] ERROR: current keuka/ not found at ${KEUKA_CUR}"; exit 2; }
 
-# Snapshot staged payload to avoid races (kept for debugging)
+if [[ ! -d "${KEUKA_NEW}" ]]; then
+  echo "[update_code_only] ERROR: staged keuka/ not found at ${KEUKA_NEW}"
+  exit 2
+fi
+if [[ ! -d "${KEUKA_CUR}" ]]; then
+  echo "[update_code_only] ERROR: current keuka/ not found at ${KEUKA_CUR}"
+  exit 2
+fi
+
+# Snapshot staged payload to avoid races (KEEP IT for debug)
 SNAP_DIR="$(mktemp -d /tmp/keuka_apply_XXXXXX)"
-cleanup_snap() { [[ -n "${SNAP_DIR:-}" && -d "${SNAP_DIR}" ]] && rm -rf "${SNAP_DIR}"; }
-# DEBUG: keep snapshot for inspection — comment out the cleanup
-# trap cleanup_snap EXIT
 echo "[update_code_only] snapshotting staged code to ${SNAP_DIR}"
 cp -a "${KEUKA_NEW}" "${SNAP_DIR}/"   # -> ${SNAP_DIR}/keuka
+echo "[update_code_only] SNAP_DIR kept at: ${SNAP_DIR}"
 
 write_markers() {
   local sha="$1"
@@ -78,25 +85,7 @@ write_markers() {
   fi
 }
 
-# ---- Logging helpers ---------------------------------------------------------
-log_list() {
-  local prefix="$1"; shift
-  while IFS= read -r line; do
-    [[ -n "$line" ]] && echo "${prefix}${line}"
-  done
-}
-
-list_staged_py() {
-  echo "[update_code_only] staged *.py files in ${SNAP_DIR}/keuka:"
-  (cd "${SNAP_DIR}/keuka" && find . -type f -name "*.py" -print | sort | sed 's#^\./##') | log_list "[stage] "
-}
-
-list_dest_py() {
-  echo "[update_code_only] current destination *.py files in ${KEUKA_CUR}:"
-  (cd "${KEUKA_CUR}" && find . -type f -name "*.py" -print | sort | sed 's#^\./##') | log_list "[dest]  "
-}
-
-# ---- Backup / Restore --------------------------------------------------------
+# Back up current *.py files (relative tree)
 BACKUP_DIR="${APP_ROOT}/keuka.pybak.$(date +%Y%m%d-%H%M%S)"
 backup_current_py() {
   echo "[update_code_only] backing up current *.py files to ${BACKUP_DIR}"
@@ -122,51 +111,44 @@ restore_from_backup() {
     local dst="${KEUKA_CUR}/${rel}"
     install -D -m 0644 "${src}" "${dst}" || true
     chown pi:pi "${dst}" || true
-    echo "[rollback] ${rel}"
     count=$((count+1))
   done < <(cd "${BACKUP_DIR}" && find . -type f -name "*.py" -print0)
   echo "[update_code_only] ROLLBACK: restored ${count} files."
 }
 
-# ---- Copy (verbose) ----------------------------------------------------------
 copy_python_files() {
+  echo "[update_code_only] BEGIN:SOURCE_LIST"
+  ( cd "${SNAP_DIR}/keuka" && find . -type f -name '*.py' -print | sort )
+  echo "[update_code_only] END:SOURCE_LIST"
+
   echo "[update_code_only] installing new *.py files from snapshot (preserving static and non-*.py)"
-  list_staged_py
-  list_dest_py
   local SRC_ROOT="${SNAP_DIR}/keuka"
   local DST_ROOT="${KEUKA_CUR}"
 
+  local copied=0
   if command -v rsync >/dev/null 2>&1; then
-    echo "[update_code_only] rsync pass (itemized changes below):"
-    # -a: archive; -i: itemize changes; --include pattern to copy only *.py
-    rsync -ai --chmod=F0644 --chown=pi:pi \
+    # --ignore-times forces copy when mtimes/sizes confuse rsync; comment if undesired.
+    rsync -aiv --ignore-times --chmod=F0644 --chown=pi:pi \
       --include='*/' --include='*.py' --exclude='*' \
-      "${SRC_ROOT}/" "${DST_ROOT}/" | log_list "[rsync] "
+      "${SRC_ROOT}/" "${DST_ROOT}/" | sed 's/^/[rsync] /'
+    copied=$(cd "${SRC_ROOT}" && find . -type f -name '*.py' | wc -l | awk '{print $1}')
   else
-    echo "[update_code_only] rsync not found — using manual copy:"
     while IFS= read -r -d '' rel; do
       rel="${rel#./}"
       local src="${SRC_ROOT}/${rel}"
       local dst="${DST_ROOT}/${rel}"
-      if [[ ! -f "${dst}" ]]; then
-        install -D -m 0644 "${src}" "${dst}"
-        chown pi:pi "${dst}" || true
-        echo "[copy] NEW       ${rel}"
-      elif cmp -s "${src}" "${dst}"; then
-        echo "[copy] UNCHANGED ${rel}"
-      else
-        install -D -m 0644 "${src}" "${dst}"
-        chown pi:pi "${dst}" || true
-        echo "[copy] UPDATED   ${rel}"
-      fi
+      echo "[copy] ${rel}"
+      install -D -m 0644 "${src}" "${dst}"
+      chown pi:pi "${dst}" || true
+      copied=$((copied+1))
     done < <(cd "${SRC_ROOT}" && find . -type f -name "*.py" -print0)
   fi
+  echo "[update_code_only] copied/updated ${copied} *.py files."
 
   # Clear old bytecode to avoid stale modules
   find "${DST_ROOT}" -type d -name "__pycache__" -exec rm -rf {} + || true
 }
 
-# ---- Prune (always on) -------------------------------------------------------
 prune_removed_py() {
   echo "[update_code_only] pruning removed *.py (always on)"
   local SRC_ROOT="${SNAP_DIR}/keuka"
@@ -174,9 +156,9 @@ prune_removed_py() {
   while IFS= read -r -d '' rel; do
     rel="${rel#./}"
     if [[ ! -f "${SRC_ROOT}/${rel}" ]]; then
+      echo "[prune] ${rel}"
       rm -f "${KEUKA_CUR}/${rel}" || true
       pruned=$((pruned+1))
-      echo "[prune] ${rel}"
     fi
   done < <(cd "${KEUKA_CUR}" && find . -type f -name "*.py" -print0)
   echo "[update_code_only] pruned ${pruned} files."
@@ -196,7 +178,6 @@ rollback() {
 do_apply() {
   set -euo pipefail
   echo "[update_code_only] (apply) begin"
-  echo "[update_code_only] using snapshot: ${SNAP_DIR}"
 
   echo "[update_code_only] stopping service: ${SERVICE_NAME}"
   systemctl daemon-reload || true
@@ -220,7 +201,6 @@ do_apply() {
     journalctl -u "${SERVICE_NAME}" -n 120 --no-pager || true
     rm -f "${PENDING_NEXT}" || true
     rollback
-    echo "[update_code_only] DEBUG: snapshot preserved at ${SNAP_DIR}"
     exit 3
   fi
 
@@ -245,28 +225,26 @@ do_apply() {
 
   rm -f "${PENDING_NEXT}" || true
   echo "[update_code_only] (apply) done."
-  echo "[update_code_only] DEBUG: snapshot preserved at ${SNAP_DIR}"
 }
 
-# ----- Parent-only work: write pending marker and detach -----
+# ----- Parent path: write pending marker and detach properly (no temp launcher) -----
 if [[ "${RUN_APPLY}" -eq 0 ]]; then
-  [[ -n "${COMMIT_SHA:-}" ]] && { echo "${COMMIT_SHA}" > "${PENDING_NEXT}" || true; echo "[update_code_only] wrote pending marker ${PENDING_NEXT}"; }
+  if [[ -n "${COMMIT_SHA:-}" ]]; then
+    echo "${COMMIT_SHA}" > "${PENDING_NEXT}" || true
+    echo "[update_code_only] wrote pending marker ${PENDING_NEXT}"
+  fi
 
   if command -v systemd-run >/dev/null 2>&1; then
     UNIT="keuka-apply-$(date +%s)"
     echo "[update_code_only] detaching via systemd-run unit ${UNIT}"
-    LAUNCH="$(mktemp /tmp/keuka_apply_launch_XXXXXX.sh)"
-    cat > "${LAUNCH}" <<LAUNCH_EOF
-#!/usr/bin/env bash
-exec /bin/bash "$(printf '%q' "$0")" \
-  --stage "$(printf '%q' "${STAGE_DIR}")" \
-  --root  "$(printf '%q' "${APP_ROOT}")" \
-  --service "$(printf '%q' "${SERVICE_NAME}")" \
-  --commit "$(printf '%q' "${COMMIT_SHA}")" \
-  --apply
-LAUNCH_EOF
-    chmod +x "${LAUNCH}"
-    systemd-run --unit="${UNIT}" --collect "${LAUNCH}" || echo "[update_code_only] WARNING: systemd-run failed; falling back to nohup"
+    # Execute THIS script directly; no ephemeral /tmp launch file.
+    systemd-run --unit="${UNIT}" --collect \
+      /bin/bash "$0" \
+      --stage "${STAGE_DIR}" \
+      --root  "${APP_ROOT}" \
+      --service "${SERVICE_NAME}" \
+      --commit "${COMMIT_SHA}" \
+      --apply || echo "[update_code_only] WARNING: systemd-run failed; falling back to nohup"
     exit 0
   fi
 
