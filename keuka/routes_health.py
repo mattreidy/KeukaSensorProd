@@ -9,7 +9,6 @@
 import json
 import time
 import re
-import ast
 from pathlib import Path
 from datetime import datetime, timedelta
 from flask import Blueprint, Response, request
@@ -17,11 +16,11 @@ from flask import Blueprint, Response, request
 from ui import render_page
 from utils import utcnow_str, read_text
 from config import (
+    APP_DIR,
     WLAN_STA_IFACE, WLAN_AP_IFACE, VERSION,
     TEMP_WARN_F, TEMP_CRIT_F, RSSI_WARN_DBM, RSSI_CRIT_DBM,
     CPU_TEMP_WARN_C, CPU_TEMP_CRIT_C,
 )
-import config as _config  # to get the on-disk path for read/write
 from camera import camera
 from sensors import read_temp_fahrenheit, median_distance_inches
 from wifi_net import wifi_status, ip_addr4, gw4, dns_servers
@@ -29,35 +28,27 @@ from system_diag import cpu_temp_c, uptime_seconds, disk_usage_root, mem_usage
 
 health_bp = Blueprint("health", __name__)
 
-# ---- contact persistence helpers (keep all logic here; config.py is data-only) ----
-_CONFIG_PATH = Path(_config.__file__).resolve()
+# ---- contact persistence (file: contact.txt in APP_DIR) ----------------------
+CONTACT_FILE = APP_DIR / "contact.txt"
 
-def _cfg_text() -> str:
-    try:
-        return _CONFIG_PATH.read_text(encoding="utf-8")
-    except Exception:
-        return ""
-
-def _extract_assign(src: str, key: str, default: str = "") -> str:
-    m = re.search(rf'^\s*{re.escape(key)}\s*=\s*(.+?)\s*$', src, re.M)
-    if not m:
-        return default
-    lit = m.group(1)
-    try:
-        val = ast.literal_eval(lit)
-        return str(val)
-    except Exception:
-        return default
+def _contact_defaults() -> dict:
+    return {"name": "", "address": "", "phone": "", "email": "", "notes": ""}
 
 def contact_get() -> dict:
-    txt = _cfg_text()
-    return {
-        "name":    _extract_assign(txt, "CONTACT_NAME",    ""),
-        "address": _extract_assign(txt, "CONTACT_ADDRESS", ""),
-        "phone":   _extract_assign(txt, "CONTACT_PHONE",   ""),
-        "email":   _extract_assign(txt, "CONTACT_EMAIL",   ""),
-        "notes":   _extract_assign(txt, "CONTACT_NOTES",   ""),
-    }
+    try:
+        txt = CONTACT_FILE.read_text(encoding="utf-8")
+        data = json.loads(txt) if txt.strip() else {}
+    except Exception:
+        data = {}
+    # Ensure all keys exist and are strings
+    out = _contact_defaults()
+    for k in out.keys():
+        v = data.get(k, "")
+        try:
+            out[k] = str(v) if v is not None else ""
+        except Exception:
+            out[k] = ""
+    return out
 
 def contact_set(info: dict) -> None:
     def _s(val: object, maxlen: int) -> str:
@@ -68,32 +59,18 @@ def contact_set(info: dict) -> None:
         s = s.replace("\r\n", "\n").replace("\r", "\n")
         return s[:maxlen]
 
-    new_vals = {
-        "CONTACT_NAME":    _s(info.get("name"),    200),
-        "CONTACT_ADDRESS": _s(info.get("address"), 2000),
-        "CONTACT_PHONE":   _s(info.get("phone"),   100),
-        "CONTACT_EMAIL":   _s(info.get("email"),   320),
-        "CONTACT_NOTES":   _s(info.get("notes"),   5000),
+    payload = {
+        "name":    _s(info.get("name"),    200),
+        "address": _s(info.get("address"), 2000),
+        "phone":   _s(info.get("phone"),   100),
+        "email":   _s(info.get("email"),   320),
+        "notes":   _s(info.get("notes"),   5000),
     }
 
-    src = _cfg_text()
-    if not src:
-        # If we couldn't read, do nothing (caller will handle error reporting).
-        raise RuntimeError("Unable to read config.py")
-
-    def _replace_line(src_txt: str, key: str, value: str) -> str:
-        pattern = re.compile(rf'^\s*{re.escape(key)}\s*=\s*.*$', re.M)
-        repl = f"{key} = {repr(value)}"
-        if pattern.search(src_txt):
-            return pattern.sub(repl, src_txt)
-        return src_txt.rstrip() + f"\n{repl}\n"
-
-    for k, v in new_vals.items():
-        src = _replace_line(src, k, v)
-
-    tmp = _CONFIG_PATH.with_suffix(".tmp")
-    tmp.write_text(src, encoding="utf-8")
-    tmp.replace(_CONFIG_PATH)  # atomic on POSIX
+    CONTACT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CONTACT_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(CONTACT_FILE)  # atomic on POSIX
 
 def hostapd_info(conf_path: str = "/etc/hostapd/hostapd.conf") -> dict:
     """Best-effort parse of hostapd.conf so we can show AP SSID/channel."""
@@ -270,7 +247,7 @@ def health():
       </div>
 
       <div class="card" style="margin-top:1rem; max-width:500px">
-        <h3 style="margin-top:0">Sensor Contact</h3>
+        <h3 style="margin-top:0">Contact / Notes</h3>
         <form onsubmit="saveContact(event)" class="flex" style="flex-direction:column; gap:.8rem">
           
           <div>
@@ -306,7 +283,6 @@ def health():
         </form>
       </div>
 
-
       <div class="card" style="margin-top:1rem">
         <div class="flex"><strong>Raw JSON</strong><button class="btn" onclick="copyJSON()">Copy</button><span id="copynote" class="muted"></span></div>
         <pre id="rawjson" class="mono" style="white-space:pre-wrap;margin-top:.4rem"></pre>
@@ -314,7 +290,6 @@ def health():
 
       <script>
         // ---- helpers ----
-        let contactInitialized = false;
         function fmt(v, fallback="(n/a)") {{ return (v===null||v===undefined||v==="") ? fallback : v; }}
         function bytes(n) {{
           if (n===0) return "0 B";
@@ -366,6 +341,8 @@ def health():
         setInterval(tickAgo, 1000);
 
         // ---- contact form helpers ----
+        let contactInitialized = false; // Only set fields on first load or after Save
+
         function setContactForm(c) {{
           document.getElementById('c_name').value = c?.name || "";
           document.getElementById('c_address').value = c?.address || "";
@@ -394,7 +371,7 @@ def health():
             const j = await r.json();
             if (j && j.ok) {{
               setContactForm(j.contact || {{}});
-              contactInitialized = true;
+              contactInitialized = true; // prevent SSE refreshes from overwriting edits
               status.textContent = "Saved.";
               lastUpdateEpoch = Date.now(); tickAgo();
               setTimeout(()=>{{ status.textContent = ""; }}, 1500);
@@ -494,7 +471,7 @@ def health():
           const th = document.getElementById('thumb');
           if (th && th.style.display!=="none") {{ th.src = "/snapshot?cb=" + Date.now(); }}
 
-          // Contact (populate only once; do not overwrite user edits during live refreshes)
+          // Contact (populate only once per page load; not on every refresh)
           if (!contactInitialized) {{
             setContactForm(data.contact || {{}});
             contactInitialized = true;
@@ -560,7 +537,7 @@ def health_sse():
     }
     return Response(stream(), headers=headers)
 
-# -------- Contact info API (persisted to config.py) --------
+# -------- Contact info API (persisted to contact.txt) --------
 @health_bp.route("/health/contact", methods=["GET", "POST"])
 def health_contact():
     if request.method == "GET":
@@ -575,7 +552,7 @@ def health_contact():
             "notes": payload.get("notes", ""),
         }
         contact_set(info)
-        # Return the freshly read (on-disk) values
+        # Return the freshly saved values
         return {"ok": True, "contact": contact_get()}
     except Exception:
         # Even if persisting fails, return current on-disk view so UI can recover.

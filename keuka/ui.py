@@ -79,7 +79,7 @@ def render_page(title: str, body_html: str, extra_head: str = "") -> str:
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="brand">Keuka Sensor V1.4 by Matt Reidy</div>
+      <div class="brand">Keuka Sensor V1.5 by Matt Reidy</div>
       <nav class="muted">
         <a href="/health">Health</a>
         <a href="/webcam">Webcam</a>
