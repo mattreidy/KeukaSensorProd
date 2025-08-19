@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # update_code_only.sh — code-only deploy for keuka/ (PYTHON FILES ONLY, ALWAYS PRUNE)
-# VERSION: 2025-08-19T00:35Z
+# VERSION: 2025-08-19T00:35Zztop
 #
 # What this does:
 #   - STOP the service
