@@ -50,7 +50,7 @@ fi
 LOG_DIR="${APP_ROOT}/logs"
 UPDATER_LOG="${LOG_DIR}/updater.log"
 mkdir -p "${LOG_DIR}"
-exec > >(stdbuf -o0 awk '{print; fflush()}' | tee -a "${UPDATER_LOG}") 2>&1
+exec >> "${UPDATER_LOG}" 2>&1
 
 echo "[update_code_only] starting..."
 echo "[update_code_only] STAGE_DIR=${STAGE_DIR}"
@@ -74,12 +74,18 @@ if [[ ! -d "${KEUKA_CUR}" ]]; then
 fi
 
 # Snapshot staged payload to avoid races (KEEP IT for debug)
-SNAP_BASE="${APP_ROOT}/tmp"
-mkdir -p "${SNAP_BASE}"
-SNAP_DIR="$(mktemp -d "${SNAP_BASE}/keuka_apply_XXXXXX")"
-echo "[update_code_only] snapshotting staged code to ${SNAP_DIR}"
-cp -a "${KEUKA_NEW}" "${SNAP_DIR}/"   # -> ${SNAP_DIR}/keuka
-echo "[update_code_only] SNAP_DIR kept at: ${SNAP_DIR}"
+if [[ -n "${SNAP_DIR:-}" && -d "${SNAP_DIR}/keuka" ]]; then
+  echo "[update_code_only] reusing existing SNAP_DIR: ${SNAP_DIR}"
+else
+  SNAP_BASE="${APP_ROOT}/tmp"
+  mkdir -p "${SNAP_BASE}"
+  SNAP_DIR="$(mktemp -d "${SNAP_BASE}/keuka_apply_XXXXXX")"
+  echo "[update_code_only] snapshotting staged code to ${SNAP_DIR}"
+  cp -a "${KEUKA_NEW}" "${SNAP_DIR}/"   # -> ${SNAP_DIR}/keuka
+  echo "[update_code_only] SNAP_DIR kept at: ${SNAP_DIR}"
+  chmod -R a+rx "${SNAP_DIR}" || true
+  export SNAP_DIR
+fi
 
 write_markers() {
   local sha="$1"
@@ -122,6 +128,10 @@ restore_from_backup() {
 }
 
 copy_python_files() {
+  if [[ ! -f "${SNAP_DIR}/keuka/app.py" ]]; then
+  echo "[update_code_only] ERROR: snapshot missing keuka/app.py at ${SNAP_DIR}/keuka"
+  exit 3
+  fi
   echo "[update_code_only] BEGIN:SOURCE_LIST"
   ( cd "${SNAP_DIR}/keuka" && find . -type f -name '*.py' -print | sort )
   echo "[update_code_only] END:SOURCE_LIST"
@@ -253,6 +263,7 @@ if [[ "${RUN_APPLY}" -eq 0 ]]; then
       --property=PrivateTmp=no \
       --setenv=KS_ADMIN_USER="${KS_ADMIN_USER:-}" \
       --setenv=KS_ADMIN_PASS="${KS_ADMIN_PASS:-}" \
+      --setenv=SNAP_DIR="${SNAP_DIR}" \
       /bin/bash "$0" \
       --stage "${STAGE_DIR}" \
       --root  "${APP_ROOT}" \
