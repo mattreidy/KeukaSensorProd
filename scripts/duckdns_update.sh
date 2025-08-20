@@ -37,8 +37,8 @@ mkdir -p "$(dirname "$LOG")" || true
 touch "$LOG" 2>/dev/null || true
 
 # ------------------------ debug controls --------------------------
-DEBUG="${DUCKDNS_DEBUG:-true}"
-XTRACE="${DUCKDNS_XTRACE:-true}"
+DEBUG="${DUCKDNS_DEBUG:-false}"
+XTRACE="${DUCKDNS_XTRACE:-false}"
 
 SESSION_ID="$(date +%s)-$$"
 # Base log writer (file)
