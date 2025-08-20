@@ -34,9 +34,6 @@ DHCPCD_CONF = Path("/etc/dhcpcd.conf")
 DHCPCD_MARK_BEGIN = "# KS-STATIC-BEGIN"
 DHCPCD_MARK_END   = "# KS-STATIC-END"
 
-DUCKDNS_CONF = APP_DIR / "duckdns.conf"           # token=... , domains=example1,example2
-DUCKDNS_LAST = APP_DIR / "duckdns_last.txt"
-
 # UI thresholds
 TEMP_WARN_F = float(os.environ.get("KS_TEMP_WARN_F", "85"))
 TEMP_CRIT_F = float(os.environ.get("KS_TEMP_CRIT_F", "95"))

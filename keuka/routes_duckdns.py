@@ -1,9 +1,9 @@
 # -----------------------------------------------------------------------------
 # DuckDNS admin page + JSON API (Flask Blueprint)
-# - Stores token & subdomain list in keuka/duckdns.conf (same file your config.py points to)
+# - Stores token & subdomain list in config/duckdns.conf (same file your config.py points to)
 # - Triggers the existing duckdns-update.service
 # - Controls the existing duckdns-update.timer
-# - Shows last update log from keuka/duckdns_last.txt
+# - Shows last update log from logs/duckdns_last.txt
 # - Enhanced health: next run, last result, service SubState/ExecMainStatus/start/exit
 # -----------------------------------------------------------------------------
 
@@ -19,16 +19,17 @@ from typing import Dict, Any
 
 from config import (
     ADMIN_USER, ADMIN_PASS,
-    DUCKDNS_CONF, DUCKDNS_LAST,
 )
 
 duckdns_bp = Blueprint("duckdns", __name__)
 
-CONF: Path = DUCKDNS_CONF           # e.g. /home/pi/KeukaSensorProd/keuka/duckdns.conf
-LAST: Path = DUCKDNS_LAST           # e.g. /home/pi/KeukaSensorProd/keuka/duckdns_last.txt
+from pathlib import Path
+
+# Hardcoded config/log paths and systemd units
+CONF: Path = Path("/home/pi/KeukaSensorProd/config/duckdns.conf")
+LAST: Path = Path("/home/pi/KeukaSensorProd/logs/duckdns_last.txt")
 SERVICE = "duckdns-update.service"
 TIMER   = "duckdns-update.timer"
-
 
 # ----------------------- tiny helpers -----------------------
 
