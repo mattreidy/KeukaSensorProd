@@ -18,7 +18,7 @@ Default admin credentials: **`admin/password`**.
 - Raspberry Pi micro-controller.
 - Measures **water level** (down‑looking ultrasonic) and **water temperature** (DS18B20 at lake bottom).
 - Streams a **webcam** for situational awareness.
-- **Provisioning AP** for setup via mobile device (phone): onboard Wi‑Fi (**wlan0**) advertises `keukasensor` at `192.168.50.1`.
+- **Provisioning AP** for setup via mobile device (phone): onboard Wi‑Fi (**wlan0**) advertises `KeukaSensorSetup` at `192.168.50.1`.
 - Field link uses a **USB 2.4 GHz Wi‑Fi adapter with external RP‑SMA antenna** on **wlan1** for range.
 
 ---
@@ -84,7 +84,7 @@ Follow these connections to ensure reliable operation:
 
 ## 5) Provisioning AP (onboard wlan0)
 
-- **SSID**: `keukasensor`  
+- **SSID**: `KeukaSensorSetup`  
 - **Password**: `keuka1234`  
 - **AP address**: `192.168.50.1` 
 
