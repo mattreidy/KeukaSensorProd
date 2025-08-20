@@ -73,7 +73,7 @@ Follow these connections to ensure reliable operation:
   - *(Optional)* **0.1 µF** ceramic capacitor across VCC and GND at the sensor for noise suppression
 
 - **DS18B20** (temperature):
-  - **DATA** → GPIO 4
+  - **DATA** → GPIO 6
   - **VCC** → 3.3 V
   - **GND** → Ground
   - **4.7 kΩ** pull-up resistor between DATA and 3.3 V
