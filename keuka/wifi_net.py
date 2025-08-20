@@ -52,9 +52,9 @@ def _wpacli(*args: str) -> tuple[int, str]:
     return (1, "wpa_cli not found")
 
 def _ensure_iface_up(iface: str) -> None:
-    sh(["/sbin/ip", "link", "set", iface, "up"])
+    sh(["sudo", "/sbin/ip", "link", "set", iface, "up"])
     # Disable powersave on STA; helps with some Realtek dongles
-    sh(["/sbin/iw", "dev", iface, "set", "power_save", "off"])
+    sh(["sudo", "/sbin/iw", "dev", iface, "set", "power_save", "off"])
 
 def ensure_wpa_running() -> bool:
     """
@@ -123,43 +123,46 @@ def wifi_status_sta():
     }
 
 def wifi_scan() -> List[dict]:
-    """
-    Scan via wpa_supplicant (no sudo):
-      wpa_cli scan ; wpa_cli scan_results
-    """
+    """Scan using `iw dev wlan1 scan` and return deduped, signal-sorted SSID list (no MHz info)."""
     if not ensure_wpa_running():
         return []
     _ensure_iface_up(WLAN_STA_IFACE)
-    _wpacli("scan")
-    # Give the scan a moment
-    time.sleep(2.0)
-    code, out = _wpacli("scan_results")
+
+    code, out = sh(["sudo", "/sbin/iw", "dev", WLAN_STA_IFACE, "scan"])
     if code != 0:
         return []
-    # Parse: bssid / freq / rssi / flags / ssid
+
     nets = []
-    lines = out.strip().splitlines()
-    for ln in lines[1:]:
-        parts = ln.split("\t")
-        if len(parts) < 5:
-            continue
-        bssid, freq, rssi, flags, ssid = parts[0], parts[1], parts[2], parts[3], parts[4]
-        try:
-            nets.append({
-                "ssid": ssid,
-                "signal_dbm": int(rssi),
-                "freq_mhz": int(freq),
-            })
-        except:
-            pass
-    # keep strongest per SSID
+    current = {}
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("SSID:"):
+            current["ssid"] = s.split(":", 1)[1].strip()
+        elif s.startswith("signal:"):
+            try:
+                current["signal_dbm"] = int(float(s.split()[1]))
+            except Exception:
+                pass
+        elif current.get("ssid") is not None:
+            # End of one network block; add and reset
+            nets.append(current)
+            current = {}
+
+    # Handle last network block if valid
+    if current.get("ssid"):
+        nets.append(current)
+
+    # Deduplicate by SSID: keep the strongest signal
     best = {}
-    for n in nets:
-        k = n.get("ssid")
-        if not k: continue
-        if k not in best or (n.get("signal_dbm", -999) > best[k].get("signal_dbm", -999)):
-            best[k] = n
-    return sorted(best.values(), key=lambda x: x.get("signal_dbm", -999), reverse=True)
+    for net in nets:
+        ssid = net.get("ssid")
+        if not ssid:
+            continue
+        if ssid not in best or net.get("signal_dbm", -999) > best[ssid].get("signal_dbm", -999):
+            best[ssid] = net
+
+    # Sort by signal strength (higher = stronger = closer to 0)
+    return sorted(best.values(), key=lambda n: n.get("signal_dbm", -999), reverse=True)
 
 def wifi_connect(ssid: str, psk: str) -> tuple[bool, str, dict]:
     """

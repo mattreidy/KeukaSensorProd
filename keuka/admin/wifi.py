@@ -238,7 +238,7 @@ _WIFI_HTML_TMPL = """
       if (!list || !list.length) { ul.innerHTML = "<li>(none found)</li>"; return; }
       list.forEach(n => {
         const li = document.createElement('li');
-        li.innerHTML = `<strong>${n.ssid}</strong> <span class="muted">(${n.signal_dbm??"(n/a)"} dBm @ ${n.freq_mhz??"(n/a)"} MHz)</span>`;
+        li.innerHTML = `<strong>${n.ssid}</strong> <span class="muted">(${n.signal_dbm ?? "(n/a)"} dBm)</span>`;
         li.style.cursor="pointer";
         li.onclick = () => q('#ssid').value = n.ssid;
         ul.appendChild(li);
