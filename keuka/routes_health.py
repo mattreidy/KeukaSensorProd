@@ -22,7 +22,7 @@ from config import (
     CPU_TEMP_WARN_C, CPU_TEMP_CRIT_C,
 )
 from camera import camera
-from sensors import read_temp_fahrenheit, median_distance_inches
+from sensors import read_temp_fahrenheit, median_distance_inches, read_gps_lat_lon_elev
 from wifi_net import wifi_status, ip_addr4, gw4, dns_servers
 from system_diag import cpu_temp_c, uptime_seconds, disk_usage_root, mem_usage
 
@@ -93,6 +93,10 @@ def build_health_payload() -> dict:
     tF = read_temp_fahrenheit()
     dIn = median_distance_inches()
 
+    # GPS (lat, lon in degrees; alt in meters) -> convert elevation to feet
+    lat, lon, alt_m = read_gps_lat_lon_elev()
+    elev_ft = alt_m * 3.28084 if not (alt_m != alt_m) else float('nan')  # NaN check
+
     # Wi-Fi
     st = wifi_status() or {}               # STA link info (on WLAN_STA_IFACE)
     ap = hostapd_info()                    # AP broadcast info (on WLAN_AP_IFACE)
@@ -132,6 +136,11 @@ def build_health_payload() -> dict:
         "time_utc": utcnow_str(),
         "tempF": None if (tF != tF) else round(tF, 2),
         "distanceInches": None if (dIn != dIn) else round(dIn, 2),
+        "gps": {
+            "lat": None if (lat != lat) else round(lat, 6),
+            "lon": None if (lon != lon) else round(lon, 6),
+            "elevation_ft": None if (elev_ft != elev_ft) else round(elev_ft, 1),
+        },
         "camera": "running" if camera.running else "idle",
         "wifi_sta": st,
         "wifi_ap": ap,
@@ -168,6 +177,21 @@ def health():
     info = build_health_payload()
     extra_head = f"""
     <script id="seed" type="application/json">{json.dumps(info)}</script>
+    <!-- Leaflet map (client-side; no Python deps) -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <style>
+      #map {{ height: 220px; width: 100%; border-radius: 8px; }}
+    </style>
     """
     # NOTE: This is an f-string. ALL JS braces are doubled {{ }} to avoid f-string parsing.
     body = f"""
@@ -283,6 +307,19 @@ def health():
         </form>
       </div>
 
+      <!-- New Location card -->
+      <div class="card" style="margin-top:1rem;">
+        <h3 style="margin-top:0">Location</h3>
+        <table>
+          <tr><th>GPS Lat</th><td class="mono"><span id="gpsLat"></span></td></tr>
+          <tr><th>GPS Lon</th><td class="mono"><span id="gpsLon"></span></td></tr>
+          <tr><th>GPS Elevation</th><td><span id="gpsElevFt"></span> ft</td></tr>
+        </table>
+        <div id="map" style="margin-top:.6rem;"></div>
+        <div id="mapNote" class="muted" style="margin-top:.3rem">Awaiting GPS fix or hardware...</div>
+
+      </div>
+
       <div class="card" style="margin-top:1rem">
         <div class="flex"><strong>Raw JSON</strong><button class="btn" onclick="copyJSON()">Copy</button><span id="copynote" class="muted"></span></div>
         <pre id="rawjson" class="mono" style="white-space:pre-wrap;margin-top:.4rem"></pre>
@@ -290,6 +327,14 @@ def health():
 
       <script>
         // ---- helpers ----
+        function fmtLatLonHem(d, isLat) {{
+          if (d===null || d===undefined || d==="") return "(n/a)";
+          const v = Number(d);
+          if (!isFinite(v)) return "(n/a)";
+          const dir = isLat ? (v >= 0 ? "N" : "S") : (v >= 0 ? "E" : "W");
+          const abs = Math.abs(v).toFixed(6);
+          return abs + " " + dir;
+        }}
         function fmt(v, fallback="(n/a)") {{ return (v===null||v===undefined||v==="") ? fallback : v; }}
         function bytes(n) {{
           if (n===0) return "0 B";
@@ -339,6 +384,26 @@ def health():
           el.textContent = "Updated " + (secs===0 ? "just now" : secs + "s ago");
         }}
         setInterval(tickAgo, 1000);
+
+        // ---- Leaflet map state ----
+        let map = null;
+        let mapMarker = null;
+        function ensureMap() {{
+          if (map) return;
+          map = L.map('map').setView([0, 0], 2); // safe default world view
+          L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap contributors'
+          }}).addTo(map);
+        }}
+        function updateMap(lat, lon) {{
+          if (!isFinite(lat) || !isFinite(lon)) return;
+          ensureMap();
+          const latlng = [lat, lon];
+          if (mapMarker) mapMarker.setLatLng(latlng);
+          else mapMarker = L.marker(latlng).addTo(map);
+          if (!updateMap._didFit) {{ map.setView(latlng, 12); updateMap._didFit = true; }}
+        }}
 
         // ---- contact form helpers ----
         let contactInitialized = false; // Only set fields on first load or after Save
@@ -408,6 +473,23 @@ def health():
 
           const camBadge = document.getElementById('cameraBadge');
           setBadge(camBadge, (data.camera==="running"?"ok":"idle"), (data.camera==="running"?"Running":"Idle"));
+
+          // GPS (now in Location section)
+          const gps = data.gps || {{}};
+          document.getElementById('gpsLat').textContent = fmtLatLonHem(gps.lat, true);
+          document.getElementById('gpsLon').textContent = fmtLatLonHem(gps.lon, false);
+          document.getElementById('gpsElevFt').textContent = fmt(gps.elevation_ft);
+          const hasLat = (typeof gps.lat === 'number') && isFinite(gps.lat);
+          const hasLon = (typeof gps.lon === 'number') && isFinite(gps.lon);
+          const noteEl = document.getElementById('mapNote');
+
+          if (hasLat && hasLon) {{
+            updateMap(gps.lat, gps.lon);
+            if (noteEl) noteEl.textContent = "Map centered on current GPS fix.";
+          }} else {{
+            // keep map at safe default; don't jump to (0,0)
+            if (noteEl) noteEl.textContent = "No GPS data (no lock or hardware).";
+          }}
 
           // Wi-Fi (STA)
           const ws = data.wifi_sta || {{}};
