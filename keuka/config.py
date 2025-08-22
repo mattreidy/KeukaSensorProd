@@ -1,4 +1,4 @@
 # config.py
 # Backward compatibility wrapper for core.config module
 
-from .core.config import *
+from .core_config import *
