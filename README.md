@@ -6,7 +6,7 @@
 
 ## 0) Endpoints (compatibility preserved)
 
-- `GET /` → plain text: `waterTempF,medianDistanceInches` (two decimals).
+- `GET /` → plain text: `waterTempF,medianDistanceInches,latitude,longitude,elevationFeet,fqdn` (GPS coordinates with 6 decimal places for lat/lon, FQDN from DuckDNS config).
 - `GET /health` → JSON with readings + status.
 - `GET /admin` (Basic Auth) → links to Wi‑Fi, Software Update, DuckDNS, Terminal
 

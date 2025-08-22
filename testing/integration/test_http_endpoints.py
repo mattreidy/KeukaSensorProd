@@ -49,20 +49,25 @@ class TestHTTPEndpoints:
         assert response.status_code == 200
         assert response.content_type.startswith('text/plain')
         
-        # Should return comma-separated values (temp,distance)
+        # Should return comma-separated values (temp,distance,lat,lon,elevation,fqdn)
         data = response.get_data(as_text=True)
         assert ',' in data, "Root endpoint should return comma-separated values"
         
-        # Should be parseable as two floats
+        # Should be parseable as five floats plus a string
         parts = data.strip().split(',')
-        assert len(parts) == 2, "Root endpoint should return exactly two values"
+        assert len(parts) == 6, "Root endpoint should return exactly six values (temp,distance,lat,lon,elevation,fqdn)"
         
         try:
-            temp, distance = float(parts[0]), float(parts[1])
+            temp, distance, lat, lon, elevation = map(float, parts[:5])
+            fqdn = parts[5]
             assert isinstance(temp, float)
             assert isinstance(distance, float)
-        except ValueError:
-            pytest.fail("Root endpoint values should be parseable as floats")
+            assert isinstance(lat, float)
+            assert isinstance(lon, float)
+            assert isinstance(elevation, float)
+            assert isinstance(fqdn, str) and len(fqdn) > 0
+        except (ValueError, IndexError):
+            pytest.fail("Root endpoint should return five floats and a non-empty string")
     
     def test_health_json_endpoint(self):
         """Test health JSON endpoint"""
@@ -76,9 +81,15 @@ class TestHTTPEndpoints:
             assert isinstance(data, dict)
             
             # Should have expected fields
-            expected_fields = ['time_utc', 'tempF', 'distanceInches', 'camera']
+            expected_fields = ['time_utc', 'tempF', 'distanceInches', 'camera', 'gps']
             for field in expected_fields:
                 assert field in data, f"Missing field in health JSON: {field}"
+            
+            # GPS sub-object should have lat, lon, elevation_ft
+            if 'gps' in data and data['gps']:
+                gps_fields = ['lat', 'lon', 'elevation_ft']
+                for field in gps_fields:
+                    assert field in data['gps'], f"Missing GPS field: {field}"
     
     def test_health_page_endpoint(self):
         """Test health dashboard page"""
