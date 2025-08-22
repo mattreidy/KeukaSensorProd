@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/KeukaSensorProd
-ExecStart=/bin/bash /home/pi/KeukaSensorProd/scripts/wifi-watchdog.sh
+ExecStart=/bin/bash /home/pi/KeukaSensorProd/deployment/scripts/wifi_monitor.sh
 Restart=always
 RestartSec=30
 
