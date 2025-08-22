@@ -1,11 +1,13 @@
 [Unit]
 Description=Run Keuka Sensor Log Cleanup daily
-Requires=log-cleanup.service
 
 [Timer]
+# Run once per day, with a randomized delay to avoid thundering herd
 OnCalendar=daily
 RandomizedDelaySec=1h
 Persistent=true
+# Explicitly bind this timer to the service regardless of file name
+Unit=log-cleanup.service
 
 [Install]
 WantedBy=timers.target
