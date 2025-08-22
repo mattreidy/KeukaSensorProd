@@ -21,11 +21,11 @@ from config import (
 from utils import sh, read_text, write_text_atomic
 
 # ---- helpers ---------------------------------------------------------------
-def ap_ssid_current(prefix: str = "KeukaSensor") -> str:
+def ap_ssid_current() -> str:
     """
     1) Prefer /run/keuka-ap-ssid written by ks-set-ap-ssid.sh
-    2) Else derive <prefix>_<last4hex> from AP MAC
-    3) Fallback to "<prefix>_####"
+    2) Else read actual SSID from hostapd.conf
+    3) Fallback to "KeukaSensorSetup"
     """
     try:
         txt = (Path("/run/keuka-ap-ssid").read_text(errors="ignore") or "").strip()
@@ -33,14 +33,18 @@ def ap_ssid_current(prefix: str = "KeukaSensor") -> str:
             return txt
     except Exception:
         pass
+
+    # Read actual SSID from hostapd configuration
     try:
-        mac = (Path(f"/sys/class/net/{WLAN_AP_IFACE}/address")
-               .read_text(errors="ignore").strip().replace(":", ""))
-        if mac:
-            return f"{prefix}_{mac[-4:].upper()}"
+        hostapd_conf = Path("/etc/hostapd/hostapd.conf").read_text(errors="ignore")
+        for line in hostapd_conf.splitlines():
+            line = line.strip()
+            if line.startswith("ssid=") and not line.startswith("ssid2="):
+                return line.split("=", 1)[1].strip()
     except Exception:
         pass
-    return f"{prefix}_####"
+
+    return "KeukaSensorSetup"
 
 
 def _wpacli(*args: str) -> tuple[int, str]:
