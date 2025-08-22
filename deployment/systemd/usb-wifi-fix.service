@@ -6,7 +6,7 @@ Wants=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/home/pi/KeukaSensorProd/scripts/usb_wifi_fix.sh
+ExecStart=/home/pi/KeukaSensorProd/deployment/scripts/usb_wifi_fix.sh
 RemainAfterExit=yes
 TimeoutStartSec=120
 StandardOutput=journal
