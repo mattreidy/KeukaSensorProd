@@ -21,11 +21,19 @@ set -Eeuo pipefail
 timestamp() { date -Is 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z'; }
 
 choose_conf() {
-  printf '%s' "/home/pi/KeukaSensorProd/config/duckdns.conf"
+  if [[ -n "${DUCKDNS_CONFIG:-}" ]]; then
+    printf '%s' "$DUCKDNS_CONFIG"
+  else
+    printf '%s' "/home/pi/KeukaSensorProd/configuration/services/duckdns.conf"
+  fi
 }
 
 choose_log() {
-  printf '%s' "/home/pi/KeukaSensorProd/logs/duckdns_last.txt"
+  if [[ -n "${DUCKDNS_LOG:-}" ]]; then
+    printf '%s' "$DUCKDNS_LOG"
+  else
+    printf '%s' "/home/pi/KeukaSensorProd/data/logs/duckdns_last.txt"
+  fi
 }
 
 CONF="$(choose_conf)"

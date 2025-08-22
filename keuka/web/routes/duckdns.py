@@ -26,8 +26,9 @@ duckdns_bp = Blueprint("duckdns", __name__)
 from pathlib import Path
 
 # Hardcoded config/log paths and systemd units
-CONF: Path = Path("/home/pi/KeukaSensorProd/config/duckdns.conf")
-LAST: Path = Path("/home/pi/KeukaSensorProd/logs/duckdns_last.txt")
+CONF: Path = Path("/home/pi/KeukaSensorProd/configuration/services/duckdns.conf")
+LAST: Path = Path("/home/pi/KeukaSensorProd/data/logs/duckdns_last.txt")
+
 SERVICE = "duckdns-update.service"
 TIMER   = "duckdns-update.timer"
 

@@ -1,29 +1,26 @@
 [Unit]
-Description=DuckDNS Update Script
-Wants=network-online.target
+Description=DuckDNS Updater (KeukaSensorProd)
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
 User=pi
 Group=pi
-UMask=0077
 WorkingDirectory=/home/pi/KeukaSensorProd
 
-# Explicit environment so it matches your successful manual run
-Environment=DUCKDNS_CONF=/home/pi/KeukaSensorProd/configuration/services/duckdns.conf
+# Ensure directories exist before running
+ExecStartPre=/bin/mkdir -p /home/pi/KeukaSensorProd/configuration/services /home/pi/KeukaSensorProd/data/logs
+
+# Environment allows overrides without editing the script
+Environment=DATA_DIR=/home/pi/KeukaSensorProd/data
+Environment=CONFIG_DIR=/home/pi/KeukaSensorProd/configuration/services
+Environment=LOG_DIR=/home/pi/KeukaSensorProd/data/logs
+Environment=DUCKDNS_CONFIG=/home/pi/KeukaSensorProd/configuration/services/duckdns.conf
+Environment=DUCKDNS_TMP=/home/pi/KeukaSensorProd/configuration/services/duckdns.tmp
 Environment=DUCKDNS_LOG=/home/pi/KeukaSensorProd/data/logs/duckdns_last.txt
-Environment=CURL=/usr/bin/curl
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=HOME=/home/pi
 
-# Run with Bash explicitly
-ExecStart=/usr/bin/env bash /home/pi/KeukaSensorProd/deployment/scripts/duckdns_update.sh
-
-# Treat remote KO (exit 1) as success so the unit doesn't look failed
-SuccessExitStatus=1
-
-# Send stdout/stderr to the journal for easier debugging
+ExecStart=/bin/bash /home/pi/KeukaSensorProd/deployment/scripts/duckdns_update.sh
 StandardOutput=journal
 StandardError=journal
 
