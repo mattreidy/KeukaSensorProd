@@ -5,7 +5,7 @@
 # -----------------------------------------------------------------------------
 
 from flask import Blueprint, make_response
-from sensors import read_temp_fahrenheit, median_distance_inches
+from ...sensors import read_temp_fahrenheit, median_distance_inches
 
 root_bp = Blueprint("root", __name__)
 

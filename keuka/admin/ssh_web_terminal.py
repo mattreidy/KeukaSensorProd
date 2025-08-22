@@ -21,7 +21,7 @@ from flask import Blueprint, request, render_template_string
 from flask_socketio import Namespace, emit
 import paramiko
 
-from socketio_ext import socketio
+from ..socketio_ext import socketio
 
 DEFAULT_SSH_HOST = os.environ.get("KS_TERM_SSH_HOST", "127.0.0.1")
 DEFAULT_SSH_PORT = int(os.environ.get("KS_TERM_SSH_PORT", "22"))

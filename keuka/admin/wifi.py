@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
-from ui import render_page
-from config import WLAN_STA_IFACE, WLAN_AP_IFACE
-from wifi_net import (
+from ..ui import render_page
+from ..config import WLAN_STA_IFACE, WLAN_AP_IFACE
+from ..wifi_net import (
     wifi_scan, wifi_connect, wifi_status_sta,
     ip_addr4, gw4, dns_servers, dhcpcd_current_mode, apply_network,
     ap_ssid_current,

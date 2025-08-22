@@ -20,8 +20,8 @@ from __future__ import annotations
 from flask import Blueprint, Response
 import json
 
-from updater import updater, APP_ROOT, REPO_URL, SERVICE_NAME
-from version import get_local_commit_with_source, get_remote_commit, short_sha
+from ..updater import updater, APP_ROOT, REPO_URL, SERVICE_NAME
+from ..version import get_local_commit_with_source, get_remote_commit, short_sha
 
 def attach(bp: Blueprint) -> None:
     @bp.route("/admin/update")
@@ -183,7 +183,7 @@ def attach(bp: Blueprint) -> None:
         body = (_UPDATE_HTML
                 .replace("%%REPO_URL%%", REPO_URL)
                 .replace("%%SERVICE_NAME%%", SERVICE_NAME))
-        from ui import render_page
+        from ..ui import render_page
         return render_page("Keuka Sensor – Update Code", body)
 
     @bp.route("/admin/start_update", methods=["POST"])

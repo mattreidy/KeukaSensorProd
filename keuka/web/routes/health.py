@@ -13,18 +13,18 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from flask import Blueprint, Response, request
 
-from ui import render_page
-from utils import utcnow_str, read_text
-from config import (
+from ...ui import render_page
+from ...utils import utcnow_str, read_text
+from ...config import (
     APP_DIR,
     WLAN_STA_IFACE, WLAN_AP_IFACE, VERSION,
     TEMP_WARN_F, TEMP_CRIT_F, RSSI_WARN_DBM, RSSI_CRIT_DBM,
     CPU_TEMP_WARN_C, CPU_TEMP_CRIT_C,
 )
-from camera import camera
-from sensors import read_temp_fahrenheit, median_distance_inches, read_gps_lat_lon_elev
-from wifi_net import wifi_status, ip_addr4, gw4, dns_servers
-from system_diag import cpu_temp_c, uptime_seconds, disk_usage_root, mem_usage
+from ...camera import camera
+from ...sensors import read_temp_fahrenheit, median_distance_inches, read_gps_lat_lon_elev
+from ...wifi_net import wifi_status, ip_addr4, gw4, dns_servers
+from ...system_diag import cpu_temp_c, uptime_seconds, disk_usage_root, mem_usage
 
 health_bp = Blueprint("health", __name__)
 

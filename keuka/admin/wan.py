@@ -19,7 +19,7 @@ import json
 import re
 from urllib.request import urlopen
 
-from updater import APP_ROOT
+from ..updater import APP_ROOT
 
 WAN_TRACK = Path(APP_ROOT) / "wan_ip.json"
 

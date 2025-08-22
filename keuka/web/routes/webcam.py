@@ -8,8 +8,8 @@
 
 import time
 from flask import Blueprint, Response, abort
-from camera import camera  # backend-agnostic; produces JPEG bytes
-from ui import render_page
+from ...camera import camera  # backend-agnostic; produces JPEG bytes
+from ...ui import render_page
 
 webcam_bp = Blueprint("webcam", __name__)
 

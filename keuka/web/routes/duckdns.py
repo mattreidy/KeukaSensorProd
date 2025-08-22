@@ -17,7 +17,7 @@ import re
 import subprocess
 from typing import Dict, Any
 
-from config import (
+from ...config import (
     ADMIN_USER, ADMIN_PASS,
 )
 

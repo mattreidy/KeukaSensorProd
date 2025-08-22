@@ -27,7 +27,7 @@ from __future__ import annotations
 from flask import Blueprint, request, Response
 import json
 
-from config import ADMIN_USER, ADMIN_PASS
+from ..config import ADMIN_USER, ADMIN_PASS
 
 # Create the single blueprint that keeps the original name.
 admin_bp = Blueprint("admin", __name__)

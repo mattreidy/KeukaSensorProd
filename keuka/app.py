@@ -8,18 +8,18 @@
 # -----------------------------------------------------------------------------
 
 from flask import Flask
-from config import VERSION  # example: can be shown in templates if needed
+from .config import VERSION  # example: can be shown in templates if needed
 
-# Import blueprints (unqualified imports match your PYTHONPATH=keuka/)
-from routes_root import root_bp
-from routes_webcam import webcam_bp
-from routes_admin import admin_bp
-from routes_health import health_bp
-from routes_duckdns import duckdns_bp
+# Import blueprints (using relative imports)
+from .routes_root import root_bp
+from .routes_webcam import webcam_bp
+from .routes_admin import admin_bp
+from .routes_health import health_bp
+from .routes_duckdns import duckdns_bp
 
 # Socket.IO (shared instance) and terminal integration
-from socketio_ext import socketio
-from admin.ssh_web_terminal import (
+from .socketio_ext import socketio
+from .admin.ssh_web_terminal import (
     register_terminal_blueprint,
     register_terminal_namespace,
 )

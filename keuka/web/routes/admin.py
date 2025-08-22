@@ -15,4 +15,4 @@ from __future__ import annotations
 # IMPORTANT: absolute import, NOT relative.
 # With PYTHONPATH=/home/pi/KeukaSensorProd/keuka, `admin` resolves to the
 # directory keuka/admin (which must contain __init__.py).
-from admin import admin_bp  # re-export (public API unchanged)
+from ...admin import admin_bp  # re-export (public API unchanged)

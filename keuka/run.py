@@ -5,7 +5,7 @@
 # This calls the application factory from app.py.
 # -----------------------------------------------------------------------------
 
-from app import create_app
+from .app import create_app
 
 if __name__ == "__main__":
     app = create_app()
