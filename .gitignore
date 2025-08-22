@@ -3,3 +3,5 @@ keuka/admin/__pycache__/
 .claude
 venv
 config/duckdns.conf
+testing/.pytest_cache
+testing/test_venv

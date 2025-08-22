@@ -1,0 +1,282 @@
+{
+  "timestamp": "20250822_115132",
+  "duration": 8.69483733177185,
+  "environment": {
+    "python_version": "3.9.2 (default, Mar 20 2025, 22:21:41) \n[GCC 10.2.1 20210110]",
+    "virtual_env": true,
+    "platform": "linux",
+    "project_root": "/home/pi/KeukaSensorProd"
+  },
+  "results": [
+    {
+      "category": "config",
+      "start_time": 1755877884.2219298,
+      "tests": [
+        {
+          "name": "Config file exists: config.py",
+          "status": "PASS",
+          "details": "Path: /home/pi/KeukaSensorProd/keuka/core/config.py",
+          "duration": 0.001
+        },
+        {
+          "name": "Config file exists: sensors.conf.template",
+          "status": "PASS",
+          "details": "Path: /home/pi/KeukaSensorProd/configuration/templates/sensors.conf.template",
+          "duration": 0.001
+        },
+        {
+          "name": "Config file exists: camera.conf.template",
+          "status": "PASS",
+          "details": "Path: /home/pi/KeukaSensorProd/configuration/templates/camera.conf.template",
+          "duration": 0.001
+        },
+        {
+          "name": "Import core config module",
+          "status": "PASS",
+          "details": "Successfully imported core.config",
+          "duration": 0.002
+        },
+        {
+          "name": "Environment template: keuka-sensor.env.template",
+          "status": "PASS",
+          "details": "Path: /home/pi/KeukaSensorProd/deployment/environment/keuka-sensor.env.template",
+          "duration": 0.001
+        },
+        {
+          "name": "Environment template: keuka.env.template",
+          "status": "PASS",
+          "details": "Path: /home/pi/KeukaSensorProd/deployment/environment/keuka.env.template",
+          "duration": 0.001
+        }
+      ],
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "end_time": 1755877884.2419512,
+      "duration": 0.020021438598632812
+    },
+    {
+      "category": "http",
+      "start_time": 1755877884.2420306,
+      "tests": [
+        {
+          "name": "Root endpoint",
+          "status": "PASS",
+          "details": "GET / -> 200",
+          "duration": 2.2093665599823
+        },
+        {
+          "name": "Health JSON endpoint",
+          "status": "PASS",
+          "details": "GET /health.json -> 200",
+          "duration": 2.3109171390533447
+        },
+        {
+          "name": "Webcam page",
+          "status": "PASS",
+          "details": "GET /webcam -> 200",
+          "duration": 0.00975346565246582
+        }
+      ],
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "end_time": 1755877892.792836,
+      "duration": 8.55080533027649
+    },
+    {
+      "category": "sensors",
+      "start_time": 1755877892.792958,
+      "tests": [
+        {
+          "name": "Temperature module import",
+          "status": "PASS",
+          "details": "Successfully imported temperature module",
+          "duration": 0.001
+        },
+        {
+          "name": "Temperature function exists",
+          "status": "PASS",
+          "details": "read_temp_fahrenheit function found",
+          "duration": 0.001
+        },
+        {
+          "name": "Ultrasonic module import",
+          "status": "PASS",
+          "details": "Successfully imported ultrasonic module",
+          "duration": 0.001
+        },
+        {
+          "name": "Ultrasonic function exists",
+          "status": "PASS",
+          "details": "median_distance_inches function found",
+          "duration": 0.001
+        },
+        {
+          "name": "GPS module import",
+          "status": "PASS",
+          "details": "Successfully imported GPS module",
+          "duration": 0.001
+        }
+      ],
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "end_time": 1755877892.793089,
+      "duration": 0.0001308917999267578
+    },
+    {
+      "category": "camera",
+      "start_time": 1755877892.7931345,
+      "tests": [
+        {
+          "name": "Camera module import",
+          "status": "PASS",
+          "details": "Successfully imported camera module",
+          "duration": 0.001
+        },
+        {
+          "name": "Camera functions exist",
+          "status": "PASS",
+          "details": "get_jpeg and available functions found",
+          "duration": 0.001
+        }
+      ],
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "end_time": 1755877892.79319,
+      "duration": 5.555152893066406e-05
+    },
+    {
+      "category": "network",
+      "start_time": 1755877892.7932267,
+      "tests": [
+        {
+          "name": "WiFi module import",
+          "status": "PASS",
+          "details": "Successfully imported wifi module",
+          "duration": 0.001
+        },
+        {
+          "name": "WiFi function: wifi_status",
+          "status": "PASS",
+          "details": "wifi_status function found",
+          "duration": 0.001
+        },
+        {
+          "name": "WiFi function: ip_addr4",
+          "status": "PASS",
+          "details": "ip_addr4 function found",
+          "duration": 0.001
+        },
+        {
+          "name": "WiFi function: gw4",
+          "status": "PASS",
+          "details": "gw4 function found",
+          "duration": 0.001
+        },
+        {
+          "name": "WiFi function: dns_servers",
+          "status": "PASS",
+          "details": "dns_servers function found",
+          "duration": 0.001
+        }
+      ],
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "end_time": 1755877892.7933028,
+      "duration": 7.605552673339844e-05
+    },
+    {
+      "category": "security",
+      "start_time": 1755877892.7933383,
+      "tests": [
+        {
+          "name": "Admin module file: __init__.py",
+          "status": "PASS",
+          "details": "__init__.py exists",
+          "duration": 0.001
+        },
+        {
+          "name": "Admin module file: ssh_web_terminal.py",
+          "status": "PASS",
+          "details": "ssh_web_terminal.py exists",
+          "duration": 0.001
+        },
+        {
+          "name": "Admin module file: wifi.py",
+          "status": "PASS",
+          "details": "wifi.py exists",
+          "duration": 0.001
+        },
+        {
+          "name": "Admin module file: update.py",
+          "status": "PASS",
+          "details": "update.py exists",
+          "duration": 0.001
+        },
+        {
+          "name": "Admin module file: wan.py",
+          "status": "PASS",
+          "details": "wan.py exists",
+          "duration": 0.001
+        }
+      ],
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "end_time": 1755877892.7941313,
+      "duration": 0.0007929801940917969
+    },
+    {
+      "category": "integration",
+      "start_time": 1755877892.7941802,
+      "tests": [
+        {
+          "name": "Full app creation",
+          "status": "PASS",
+          "details": "Successfully created Flask app with all blueprints",
+          "duration": 0.01
+        },
+        {
+          "name": "Blueprint registered: root",
+          "status": "PASS",
+          "details": "root blueprint found in app",
+          "duration": 0.001
+        },
+        {
+          "name": "Blueprint registered: webcam",
+          "status": "PASS",
+          "details": "webcam blueprint found in app",
+          "duration": 0.001
+        },
+        {
+          "name": "Blueprint registered: admin",
+          "status": "PASS",
+          "details": "admin blueprint found in app",
+          "duration": 0.001
+        },
+        {
+          "name": "Blueprint registered: health",
+          "status": "PASS",
+          "details": "health blueprint found in app",
+          "duration": 0.001
+        }
+      ],
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "end_time": 1755877892.9107342,
+      "duration": 0.11655402183532715
+    }
+  ],
+  "summary": {
+    "total_categories": 7,
+    "total_tests": 31,
+    "total_passed": 31,
+    "total_failed": 0,
+    "total_skipped": 0
+  }
+}
