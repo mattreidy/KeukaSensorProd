@@ -11,14 +11,14 @@ UMask=0077
 WorkingDirectory=/home/pi/KeukaSensorProd
 
 # Explicit environment so it matches your successful manual run
-Environment=DUCKDNS_CONF=/home/pi/KeukaSensorProd/config/duckdns.conf
-Environment=DUCKDNS_LOG=/home/pi/KeukaSensorProd/logs/duckdns_last.txt
+Environment=DUCKDNS_CONF=/home/pi/KeukaSensorProd/configuration/services/duckdns.conf
+Environment=DUCKDNS_LOG=/home/pi/KeukaSensorProd/data/logs/duckdns_last.txt
 Environment=CURL=/usr/bin/curl
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=HOME=/home/pi
 
 # Run with Bash explicitly
-ExecStart=/usr/bin/env bash /home/pi/KeukaSensorProd/scripts/duckdns_update.sh
+ExecStart=/usr/bin/env bash /home/pi/KeukaSensorProd/deployment/scripts/duckdns_update.sh
 
 # Treat remote KO (exit 1) as success so the unit doesn't look failed
 SuccessExitStatus=1

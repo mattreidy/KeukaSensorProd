@@ -19,7 +19,7 @@
 #   - Repository must be accessible at the expected location
 #
 # USAGE:
-#   sudo ./scripts/install_services.sh [options]
+#   sudo ./deployment/scripts/install_services.sh [options]
 #
 # OPTIONS:
 #   --dry-run           Show what would be done without making changes
@@ -40,8 +40,8 @@ set -euo pipefail
 
 # Script configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-SYSTEMD_SOURCE_DIR="$REPO_ROOT/systemd"
+REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+SYSTEMD_SOURCE_DIR="$SCRIPT_DIR/../systemd"
 SYSTEMD_TARGET_DIR="/etc/systemd/system"
 
 # Default settings

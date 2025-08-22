@@ -1,0 +1,56 @@
+# Keuka Sensor Hardware Configuration Template
+# Copy and customize this file for your sensor setup
+
+[ultrasonic]
+# JSN-SR04T Ultrasonic Sensor Configuration
+# GPIO pin assignments (BCM numbering)
+trigger_pin = 23
+echo_pin = 24
+
+# Measurement settings
+timeout_seconds = 0.04
+sample_count = 11
+sample_delay = 0.075
+
+# Calibration (if needed)
+# speed_of_sound = 343.0  # m/s at 20°C
+# correction_factor = 1.0
+
+[temperature]
+# DS18B20 Temperature Sensor Configuration
+# GPIO pin assignment (BCM numbering)
+data_pin = 6
+
+# Sensor settings
+# Note: DS18B20 uses 1-Wire protocol, ensure it's enabled in raspi-config
+conversion_delay = 0.75  # seconds for temperature conversion
+
+# Temperature limits for monitoring
+warning_threshold_f = 85
+critical_threshold_f = 95
+
+[gps]
+# NEO-6M GPS Module Configuration (optional)
+# Serial port settings
+port = /dev/serial0
+baud_rate = 9600
+
+# Timing settings
+read_timeout = 0.5
+session_duration = 2.0
+
+# Enable/disable GPS functionality
+enabled = false
+
+[monitoring]
+# System monitoring thresholds
+cpu_temp_warning_c = 75
+cpu_temp_critical_c = 85
+
+# Wi-Fi signal strength thresholds (dBm)
+rssi_warning = -70
+rssi_critical = -80
+
+# Update intervals (seconds)
+sensor_read_interval = 1.0
+health_check_interval = 5.0

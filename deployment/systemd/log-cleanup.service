@@ -7,7 +7,7 @@ Type=oneshot
 User=pi
 Group=pi
 WorkingDirectory=/home/pi/KeukaSensorProd
-ExecStart=/home/pi/KeukaSensorProd/scripts/cleanup_logs.sh
+ExecStart=/home/pi/KeukaSensorProd/deployment/scripts/cleanup_logs.sh
 StandardOutput=journal
 StandardError=journal
 

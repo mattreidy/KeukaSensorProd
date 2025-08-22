@@ -34,7 +34,7 @@ StandardError=journal
 
 # Start Gunicorn (uses your repo's config file)
 ExecStart=/home/pi/KeukaSensorProd/venv/bin/gunicorn \
-    -c /home/pi/KeukaSensorProd/config/gunicorn.conf.py \
+    -c /home/pi/KeukaSensorProd/configuration/application/gunicorn.conf.py \
     'app:create_app()'
 
 ExecReload=/bin/kill -HUP $MAINPID

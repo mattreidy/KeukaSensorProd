@@ -1,0 +1,39 @@
+# Keuka Sensor Camera Configuration Template
+# Copy and customize this file for your camera setup
+
+[camera]
+# Camera backend selection
+# Options: auto, opencv, picamera2
+backend = auto
+
+# Camera device index (for USB cameras)
+device_index = 0
+
+# Frame dimensions
+frame_width = 640
+frame_height = 480
+
+# JPEG compression quality (1-100, higher = better quality)
+jpeg_quality = 80
+
+# Frame capture interval in seconds
+frame_interval = 0.1
+
+# Camera rotation in degrees (0, 90, 180, 270)
+rotation = 0
+
+[picamera2]
+# Picamera2-specific settings
+# Buffer count for video capture
+buffer_count = 4
+
+# Image format for capture
+capture_format = RGB888
+
+[opencv]
+# OpenCV-specific settings
+# Preferred backend
+backend = V4L2
+
+# Additional OpenCV properties can be added here
+# Property IDs: https://docs.opencv.org/4.x/d4/d15/group__videoio__flags__base.html
