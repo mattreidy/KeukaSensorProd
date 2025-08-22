@@ -19,18 +19,17 @@ from typing import Dict, Any
 
 from config import (
     ADMIN_USER, ADMIN_PASS,
-    DUCKDNS_CONF, DUCKDNS_LOG, DUCKDNS_SERVICE, DUCKDNS_TIMER,
 )
 
 duckdns_bp = Blueprint("duckdns", __name__)
 
 from pathlib import Path
 
-# Configuration now imported from config.py (centralized)
-CONF = DUCKDNS_CONF
-LAST = DUCKDNS_LOG
-SERVICE = DUCKDNS_SERVICE
-TIMER = DUCKDNS_TIMER
+# Hardcoded config/log paths and systemd units
+CONF: Path = Path("/home/pi/KeukaSensorProd/config/duckdns.conf")
+LAST: Path = Path("/home/pi/KeukaSensorProd/logs/duckdns_last.txt")
+SERVICE = "duckdns-update.service"
+TIMER   = "duckdns-update.timer"
 
 # ----------------------- tiny helpers -----------------------
 

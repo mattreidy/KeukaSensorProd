@@ -42,14 +42,7 @@ RSSI_CRIT_DBM = int(os.environ.get("KS_RSSI_CRIT_DBM", "-80"))
 CPU_TEMP_WARN_C = float(os.environ.get("KS_CPU_WARN_C", "75"))
 CPU_TEMP_CRIT_C = float(os.environ.get("KS_CPU_CRIT_C", "85"))
 
-# DuckDNS paths and service names
-DUCKDNS_CONF = Path(os.environ.get("DUCKDNS_CONF", "/home/pi/KeukaSensorProd/config/duckdns.conf"))
-DUCKDNS_LOG = Path(os.environ.get("DUCKDNS_LOG", "/home/pi/KeukaSensorProd/logs/duckdns_last.txt"))
-DUCKDNS_SERVICE = "duckdns-update.service"
-DUCKDNS_TIMER = "duckdns-update.timer"
-
-# DuckDNS debug settings
-DUCKDNS_DEBUG = os.environ.get("DUCKDNS_DEBUG", "false").lower() == "true"
-DUCKDNS_XTRACE = os.environ.get("DUCKDNS_XTRACE", "false").lower() == "true"
+# App
+VERSION = "unused"
 
 

@@ -21,11 +21,11 @@ set -Eeuo pipefail
 timestamp() { date -Is 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z'; }
 
 choose_conf() {
-  printf '%s' "${DUCKDNS_CONF:-/home/pi/KeukaSensorProd/config/duckdns.conf}"
+  printf '%s' "/home/pi/KeukaSensorProd/config/duckdns.conf"
 }
 
 choose_log() {
-  printf '%s' "${DUCKDNS_LOG:-/home/pi/KeukaSensorProd/logs/duckdns_last.txt}"
+  printf '%s' "/home/pi/KeukaSensorProd/logs/duckdns_last.txt"
 }
 
 CONF="$(choose_conf)"
@@ -68,7 +68,7 @@ elapsed_ms() {
 }
 
 # ------------------------ lock with stale detection ----------------
-LOCKBASE="${DUCKDNS_LOCKBASE:-${DUCKDNS_LOG%/*}}"
+LOCKBASE="${DUCKDNS_LOCKBASE:-/home/pi/KeukaSensorProd/logs}"
 mkdir -p "${LOCKBASE}" || true
 LOCKDIR="${LOCKBASE}/.duckdns.lock"
 LOCKPID="${LOCKDIR}/pid"

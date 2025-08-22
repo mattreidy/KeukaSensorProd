@@ -33,7 +33,7 @@ def ap_ssid_current() -> str:
             return txt
     except Exception:
         pass
-    
+
     # Read actual SSID from hostapd configuration
     try:
         hostapd_conf = Path("/etc/hostapd/hostapd.conf").read_text(errors="ignore")
@@ -43,7 +43,7 @@ def ap_ssid_current() -> str:
                 return line.split("=", 1)[1].strip()
     except Exception:
         pass
-    
+
     return "KeukaSensorSetup"
 
 
