@@ -1,0 +1,16 @@
+[Unit]
+Description=USB WiFi Adapter Reliability Fix
+After=multi-user.target
+Before=dhcpcd.service
+Wants=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/KeukaSensorProd/scripts/usb_wifi_fix.sh
+RemainAfterExit=yes
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
