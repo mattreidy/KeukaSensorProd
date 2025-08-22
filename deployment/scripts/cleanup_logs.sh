@@ -4,8 +4,8 @@
 
 # Configuration
 APP_ROOT="/home/pi/KeukaSensorProd"
-LOG_DIR="$APP_ROOT/data/logs"
-TMP_DIR="$APP_ROOT/data/tmp"
+LOG_DIR="$APP_ROOT/logs"
+TMP_DIR="$APP_ROOT/tmp"
 BACKUP_RETENTION_DAYS=7
 DUCKDNS_LOG_MAX_SIZE_BYTES=5242880  # 5MB
 
