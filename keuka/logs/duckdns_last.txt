@@ -1,0 +1,30 @@
++ 2025-08-20T13:28:14-04:00 [1755710894-2640] main() 78: LOCKBASE=/home/pi/KeukaSensorProd/logs
++ 2025-08-20T13:28:14-04:00 [1755710894-2640] main() 79: mkdir -p /home/pi/KeukaSensorProd/logs
++ 2025-08-20T13:28:14-04:00 [1755710894-2640] main() 80: LOCKDIR=/home/pi/KeukaSensorProd/logs/.duckdns.lock
++ 2025-08-20T13:28:14-04:00 [1755710894-2640] main() 81: mkdir /home/pi/KeukaSensorProd/logs/.duckdns.lock
++ 2025-08-20T13:28:14-04:00 [1755710894-2640] main() 82: log '[lock] another run is active; exiting without work'
++ 2025-08-20T13:28:14-04:00 [1755710894-2640] log() 58: _log_file '[lock] another run is active; exiting without work'
+++ 2025-08-20T13:28:14-04:00 [1755710894-2640] _log_file() 56: timestamp
+++ 2025-08-20T13:28:14-04:00 [1755710894-2640] timestamp() 27: date -Is
++ 2025-08-20T13:28:14-04:00 [1755710894-2640] _log_file() 56: printf '%s [%s] %s\n' 2025-08-20T13:28:14-04:00 1755710894-2640 '[lock] another run is active; exiting without work'
+2025-08-20T13:28:14-04:00 [1755710894-2640] [lock] another run is active; exiting without work
++ 2025-08-20T13:28:14-04:00 [1755710894-2640] log() 58: [[ true == \t\r\u\e ]]
+++ 2025-08-20T13:28:14-04:00 [1755710894-2640] log() 58: timestamp
+++ 2025-08-20T13:28:14-04:00 [1755710894-2640] timestamp() 27: date -Is
++ 2025-08-20T13:28:14-04:00 [1755710894-2640] log() 58: printf '%s [%s] %s\n' 2025-08-20T13:28:14-04:00 1755710894-2640 '[lock] another run is active; exiting without work'
++ 2025-08-20T13:28:14-04:00 [1755710894-2640] main() 83: exit 0
++ 2025-08-20T13:28:30-04:00 [1755710910-2711] main() 78: LOCKBASE=/home/pi/KeukaSensorProd/logs
++ 2025-08-20T13:28:30-04:00 [1755710910-2711] main() 79: mkdir -p /home/pi/KeukaSensorProd/logs
++ 2025-08-20T13:28:30-04:00 [1755710910-2711] main() 80: LOCKDIR=/home/pi/KeukaSensorProd/logs/.duckdns.lock
++ 2025-08-20T13:28:30-04:00 [1755710910-2711] main() 81: mkdir /home/pi/KeukaSensorProd/logs/.duckdns.lock
++ 2025-08-20T13:28:30-04:00 [1755710910-2711] main() 82: log '[lock] another run is active; exiting without work'
++ 2025-08-20T13:28:30-04:00 [1755710910-2711] log() 58: _log_file '[lock] another run is active; exiting without work'
+++ 2025-08-20T13:28:30-04:00 [1755710910-2711] _log_file() 56: timestamp
+++ 2025-08-20T13:28:30-04:00 [1755710910-2711] timestamp() 27: date -Is
++ 2025-08-20T13:28:30-04:00 [1755710910-2711] _log_file() 56: printf '%s [%s] %s\n' 2025-08-20T13:28:30-04:00 1755710910-2711 '[lock] another run is active; exiting without work'
+2025-08-20T13:28:30-04:00 [1755710910-2711] [lock] another run is active; exiting without work
++ 2025-08-20T13:28:30-04:00 [1755710910-2711] log() 58: [[ true == \t\r\u\e ]]
+++ 2025-08-20T13:28:30-04:00 [1755710910-2711] log() 58: timestamp
+++ 2025-08-20T13:28:30-04:00 [1755710910-2711] timestamp() 27: date -Is
++ 2025-08-20T13:28:30-04:00 [1755710910-2711] log() 58: printf '%s [%s] %s\n' 2025-08-20T13:28:30-04:00 1755710910-2711 '[lock] another run is active; exiting without work'
++ 2025-08-20T13:28:30-04:00 [1755710910-2711] main() 83: exit 0

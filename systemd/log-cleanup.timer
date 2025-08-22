@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Keuka Sensor Log Cleanup daily
+Requires=log-cleanup.service
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
