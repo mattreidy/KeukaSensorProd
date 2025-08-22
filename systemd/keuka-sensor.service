@@ -13,6 +13,9 @@ Environment=PYTHONPATH=/usr/lib/python3/dist-packages
 Environment=KS_CAMERA=picamera2
 Environment=OPENCV_LOG_LEVEL=ERROR
 Environment=CV_LOG_LEVEL=ERROR
+Environment=CAM_FRAME_W=640
+Environment=CAM_FRAME_H=480
+Environment=CAM_JPEG_QUALITY=80
 
 
 User=pi
@@ -23,6 +26,7 @@ WorkingDirectory=/home/pi/KeukaSensorProd/keuka
 Environment=KS_STA_IFACE=wlan1 KS_AP_IFACE=wlan0
 # Load site-specific overrides if present
 EnvironmentFile=/etc/default/keuka-sensor
+EnvironmentFile=/etc/keuka.env
 
 # Log straight to journald
 StandardOutput=journal
