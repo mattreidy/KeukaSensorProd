@@ -40,9 +40,9 @@ Estimated 2025 costs
 | 1   | AC600 Mbps Dual Band USB Wi-Fi Adapter (2.4/5 GHz) with Antenna                                          | $25         | Improved wireless connectivity |
 | 1   | JSN-SR04T Waterproof Ultrasonic Sensor                                                                   | $15         | Distance measurement |
 | 1   | GY-NEO6MV2 NEO-6M GPS Module                                                                             | $10         | Elevation, lat, long |
-| 2   | Resistors (3 kΩ)                                                                                         | —           | Voltage divider for ultrasonic ECHO pin |
+| 2   | Resistor  (3 kΩ)                                                                                         | —           | Voltage divider for ultrasonic ECHO pin |
 | 1   | DS18B20 Temperature Sensor                                                                               | $15         | Temperature measurement |
-| 1   | Resistor (4.7 kΩ)                                                                                        | —           | Temperature |
+| 1   | Resistor (4.7 kΩ)                                                                                        | —           | for temperature sensor |
 | —   | Misc wiring and other components                                                                         | $15         |  |
 | 1   | Zulkit Junction Box Waterproof Clear Cover 8.7"x6.7"x4.3"                                                | $30         |  |
 
