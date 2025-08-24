@@ -6,59 +6,18 @@
 # FQDN is determined from DuckDNS configuration or system hostname.
 # -----------------------------------------------------------------------------
 
-import re
-import subprocess
-from pathlib import Path
 from flask import Blueprint, make_response
 from ...sensors import read_temp_fahrenheit, median_distance_inches, read_gps_lat_lon_elev
+from ...core.utils import get_system_fqdn
 
 root_bp = Blueprint("root", __name__)
-
-def _get_fqdn() -> str:
-    """
-    Get the system's FQDN, preferring DuckDNS domain if configured,
-    otherwise falling back to system hostname.
-    """
-    # Try to read DuckDNS configuration
-    duckdns_conf = Path("/home/pi/KeukaSensorProd/configuration/services/duckdns.conf")
-    try:
-        if duckdns_conf.exists():
-            conf_text = duckdns_conf.read_text(errors="replace")
-            for line in conf_text.splitlines():
-                s = line.strip()
-                if not s or s.startswith("#"):
-                    continue
-                m = re.match(r"domains\s*=\s*(.*)$", s, re.IGNORECASE)
-                if m:
-                    domains = m.group(1).strip().strip('"').strip("'")
-                    if domains:
-                        # Take first domain if multiple are listed
-                        first_domain = domains.split(",")[0].strip()
-                        if first_domain:
-                            # Add .duckdns.org if not already present
-                            if not first_domain.endswith(".duckdns.org"):
-                                first_domain += ".duckdns.org"
-                            return first_domain
-    except Exception:
-        pass
-    
-    # Fallback to system hostname
-    try:
-        hostname = subprocess.getoutput("hostname").strip()
-        if hostname:
-            return hostname
-    except Exception:
-        pass
-    
-    # Last resort
-    return "unknown"
 
 @root_bp.route("/")
 def root_plaintext():
     tF = read_temp_fahrenheit()
     dIn = median_distance_inches()
     lat, lon, elev_m = read_gps_lat_lon_elev()
-    fqdn = _get_fqdn()
+    fqdn = get_system_fqdn()
     
     # Convert elevation from meters to feet (1 meter = 3.28084 feet)
     elev_ft = elev_m * 3.28084 if (elev_m == elev_m) else elev_m

@@ -5,6 +5,8 @@
 #  - render_page(): simple HTML shell with topbar + container
 # -----------------------------------------------------------------------------
 
+from ..core.utils import get_system_fqdn
+
 def _base_css():
     return """
     :root {
@@ -27,6 +29,7 @@ def _base_css():
               border-bottom: 1px solid var(--border); }
     .topbar-inner { display:flex; gap:1rem; align-items:center; justify-content:space-between; padding:.8rem 1rem; max-width:1100px; margin:0 auto; }
     .brand { font-weight: 700; letter-spacing:.2px; }
+    .device-name { font-weight: 700; font-size: 1.1rem; text-align: center; margin: 0.8rem 0; }
     nav a { margin-right:.8rem; }
     .container { max-width:1100px; margin: 1rem auto 2rem auto; padding: 0 1rem; }
     h1 { font-size:1.6rem; margin: .4rem 0 .8rem 0; }
@@ -67,6 +70,7 @@ def _base_css():
 
 def render_page(title: str, body_html: str, extra_head: str = "") -> str:
     """Simple HTML shell used by all pages."""
+    device_fqdn = get_system_fqdn()
     return f"""<!doctype html>
 <html>
 <head>
@@ -88,6 +92,7 @@ def render_page(title: str, body_html: str, extra_head: str = "") -> str:
     </div>
   </header>
   <main class="container">
+    <div class="device-name">{device_fqdn}</div>
     {body_html}
   </main>
 </body>

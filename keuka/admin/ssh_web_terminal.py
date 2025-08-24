@@ -22,6 +22,7 @@ from flask_socketio import Namespace, emit
 import paramiko
 
 from ..socketio_ext import socketio
+from ..core.utils import get_system_fqdn
 
 DEFAULT_SSH_HOST = os.environ.get("KS_TERM_SSH_HOST", "127.0.0.1")
 DEFAULT_SSH_PORT = int(os.environ.get("KS_TERM_SSH_PORT", "22"))
@@ -61,6 +62,7 @@ PAGE_HTML = r"""
   <style>
     body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #111; color: #eee; }
     .wrap { max-width: 1000px; margin: 0 auto; padding: 16px; }
+    .device-name { font-weight: 700; font-size: 1.1rem; text-align: center; margin: 0.8rem 0; }
     h1 { font-size: 18px; font-weight: 600; margin: 0 0 8px; }
     form { background:#1c1c1c; padding:12px; border-radius:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     label { font-size: 13px; opacity: .9; }
@@ -74,6 +76,7 @@ PAGE_HTML = r"""
 </head>
 <body>
   <div class="wrap">
+    <div class="device-name">{{ device_fqdn }}</div>
     <h1>Keuka SSH Terminal (localhost)</h1>
     <form id="sshForm" onsubmit="return false;">
       <div class="row">
@@ -161,8 +164,9 @@ terminal_bp = Blueprint("terminal_bp", __name__)
 @terminal_bp.route(TERMINAL_ROUTE, methods=["GET"])
 @gateway_auth_required
 def terminal_page():
+    device_fqdn = get_system_fqdn()
     return render_template_string(
-        PAGE_HTML, host=DEFAULT_SSH_HOST, port=DEFAULT_SSH_PORT, ns_path=TERMINAL_NS
+        PAGE_HTML, host=DEFAULT_SSH_HOST, port=DEFAULT_SSH_PORT, ns_path=TERMINAL_NS, device_fqdn=device_fqdn
     )
 
 class SSHSession:

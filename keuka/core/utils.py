@@ -6,8 +6,10 @@
 #  - atomic file writes
 #  - basic auth check (request-agnostic: pass Flask request)
 #  - text file read
+#  - FQDN determination
 # -----------------------------------------------------------------------------
 
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -62,3 +64,42 @@ def write_text_atomic(path: Path, content: str, sudo_mv: bool = False) -> bool:
     else:
         tmp.replace(path)
         return True
+
+def get_system_fqdn() -> str:
+    """
+    Get the system's FQDN, preferring DuckDNS domain if configured,
+    otherwise falling back to system hostname.
+    """
+    # Try to read DuckDNS configuration
+    duckdns_conf = Path("/home/pi/KeukaSensorProd/configuration/services/duckdns.conf")
+    try:
+        if duckdns_conf.exists():
+            conf_text = duckdns_conf.read_text(errors="replace")
+            for line in conf_text.splitlines():
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                m = re.match(r"domains\s*=\s*(.*)$", s, re.IGNORECASE)
+                if m:
+                    domains = m.group(1).strip().strip('"').strip("'")
+                    if domains:
+                        # Take first domain if multiple are listed
+                        first_domain = domains.split(",")[0].strip()
+                        if first_domain:
+                            # Add .duckdns.org if not already present
+                            if not first_domain.endswith(".duckdns.org"):
+                                first_domain += ".duckdns.org"
+                            return first_domain
+    except Exception:
+        pass
+    
+    # Fallback to system hostname
+    try:
+        hostname = subprocess.getoutput("hostname").strip()
+        if hostname:
+            return hostname
+    except Exception:
+        pass
+    
+    # Last resort
+    return "unknown"
