@@ -17,6 +17,7 @@ Default admin credentials: **`admin/password`**.
 ## 1) High‑level overview
 - Raspberry Pi micro-controller.
 - Measures **water level** (down‑looking ultrasonic) and **water temperature** (DS18B20 at lake bottom).
+- Reports it's current elevation, lat and long via GPS.
 - Streams a **webcam** for situational awareness.
 - **Provisioning AP** for setup via mobile device (phone): onboard Wi‑Fi (**wlan0**) advertises `KeukaSensorSetup` at `192.168.50.1`.
 - Field link uses a **USB 2.4 GHz Wi‑Fi adapter with external RP‑SMA antenna** on **wlan1** for range.
@@ -37,11 +38,12 @@ Estimated 2025 costs
 | 1   | HCDC RPi GPIO Status LED & Terminal Block Breakout Board HAT                                             | $25         | Simplifies wiring and provides GPIO status LEDs |
 | 1   | Raspberry Pi Mini Camera Video Module (OV5647, 5 MP, 1080p)                                              | $10         | CSI ribbon connection for live video feed |
 | 1   | AC600 Mbps Dual Band USB Wi-Fi Adapter (2.4/5 GHz) with Antenna                                          | $25         | Improved wireless connectivity |
-| 1   | JSN-SR04T Waterproof Ultrasonic Sensor                                                                   | $15           | Distance measurement |
-| 2   | Resistors (1 kΩ, 2 kΩ)                                                                                   | —           | Voltage divider for ultrasonic ECHO pin |
-| 1   | DS18B20 Temperature Sensor                                                                               | $15           | Temperature measurement |
-| 1   | Resistor (4.7 kΩ)                                                                                         | —           | Temperature |
-| —   | Misc wiring and other components                                                                         | $15           |  |
+| 1   | JSN-SR04T Waterproof Ultrasonic Sensor                                                                   | $15         | Distance measurement |
+| 1   | GY-NEO6MV2 NEO-6M GPS Module                                                                             | $10         | Elevation, lat, long |
+| 2   | Resistors (3 kΩ)                                                                                         | —           | Voltage divider for ultrasonic ECHO pin |
+| 1   | DS18B20 Temperature Sensor                                                                               | $15         | Temperature measurement |
+| 1   | Resistor (4.7 kΩ)                                                                                        | —           | Temperature |
+| —   | Misc wiring and other components                                                                         | $15         |  |
 | 1   | Zulkit Junction Box Waterproof Clear Cover 8.7"x6.7"x4.3"                                                | $30         |  |
 
 
@@ -77,6 +79,12 @@ Follow these connections to ensure reliable operation:
   - **VCC** → 3.3 V
   - **GND** → Ground
   - **4.7 kΩ** pull-up resistor between DATA and 3.3 V
+ 
+ - **GY-NEO6MV2 NEO-6M** (gps):
+  - **RX** → TXD
+  - **TX** → RXD
+  - **VCC** → 3.3 V
+  - **GND** → Ground
 
 - **USB Wi-Fi** adapter → any free Raspberry Pi USB port
 
