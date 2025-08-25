@@ -17,6 +17,7 @@ import os
 import sys
 import time
 import threading
+from collections import deque
 from typing import Optional
 
 # ---------------- Configuration ----------------
@@ -28,8 +29,9 @@ CAMERA_INDEX = int(os.environ.get("CAMERA_INDEX", "0"))
 FRAME_W = int(os.environ.get("CAM_FRAME_W", "1280"))
 FRAME_H = int(os.environ.get("CAM_FRAME_H", "720"))
 JPEG_QUALITY = int(os.environ.get("CAM_JPEG_QUALITY", "85"))
-FRAME_INTERVAL = float(os.environ.get("CAM_FRAME_INTERVAL", "0.1"))  # seconds between captures
+FRAME_INTERVAL = float(os.environ.get("CAM_FRAME_INTERVAL", "0.05"))  # seconds between captures (20fps)
 ROTATE_DEG = int(os.environ.get("CAM_ROTATE", "0"))  # 0, 90, 180, 270
+BUFFER_SIZE = int(os.environ.get("CAM_BUFFER_SIZE", "5"))  # ring buffer size
 
 # Set OpenCV log env vars BEFORE importing cv2 to reduce noise.
 os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")  # SILENT/ERROR/WARN/INFO
@@ -111,6 +113,11 @@ class Camera:
         self.available = False
         self.frame: Optional[bytes] = None
         self.lock = threading.Lock()
+        
+        # Ring buffer for async frame access
+        self._frame_buffer: deque = deque(maxlen=BUFFER_SIZE)
+        self._buffer_lock = threading.Lock()
+        self._last_frame_time = 0.0
 
         # Backoff if camera missing
         self._last_fail_time = 0.0
@@ -297,9 +304,14 @@ class Camera:
                     time.sleep(0.5)
                     continue
 
-                # Success: store latest frame bytes
+                # Success: store latest frame bytes in both single frame and ring buffer
                 with self.lock:
                     self.frame = data
+                
+                # Add to ring buffer with timestamp for async access
+                with self._buffer_lock:
+                    self._frame_buffer.append((time.time(), data))
+                    self._last_frame_time = time.time()
 
                 # steady-ish frame rate
                 time.sleep(FRAME_INTERVAL)
@@ -313,8 +325,35 @@ class Camera:
     # ---------- Public API used by routes ----------
 
     def get_jpeg(self) -> Optional[bytes]:
+        """Get the latest frame (blocking, legacy compatibility)"""
         with self.lock:
             return self.frame
+    
+    def get_jpeg_async(self, max_age_seconds: float = 1.0) -> Optional[bytes]:
+        """Get a recent frame from buffer (non-blocking, preferred for web routes)"""
+        with self._buffer_lock:
+            if not self._frame_buffer:
+                return None
+            
+            # Get the most recent frame
+            timestamp, frame_data = self._frame_buffer[-1]
+            
+            # Check if frame is fresh enough
+            if time.time() - timestamp > max_age_seconds:
+                return None
+                
+            return frame_data
+    
+    def get_buffer_stats(self) -> dict:
+        """Get buffer statistics for monitoring"""
+        with self._buffer_lock:
+            return {
+                "buffer_size": len(self._frame_buffer),
+                "max_buffer_size": BUFFER_SIZE,
+                "last_frame_age": time.time() - self._last_frame_time if self._last_frame_time > 0 else float('inf'),
+                "available": self.available,
+                "running": self.running
+            }
 
     def stop(self) -> None:
         self.running = False

@@ -34,28 +34,48 @@ def stream_mjpeg():
         except Exception:
             pass
 
-    # Warm-up: wait briefly for first frame
-    t0 = time.time()
-    while camera.get_jpeg() is None and time.time() - t0 < 3.0:
-        time.sleep(0.05)
-
-    if camera.get_jpeg() is None:
+    # Quick check for camera availability using non-blocking buffer
+    initial_frame = camera.get_jpeg_async(max_age_seconds=2.0)
+    if initial_frame is None and not camera.available:
         abort(503, "No camera frames available.")
 
     def gen():
         boundary = b"frame"
-        # Note: camera.get_jpeg() yields already-encoded JPEG bytes.
+        last_frame = None
+        frame_repeat_count = 0
+        max_repeats = 10  # Prevent stuck frames
+        
         while True:
-            frm = camera.get_jpeg()
+            # Use async buffer access - non-blocking
+            frm = camera.get_jpeg_async(max_age_seconds=0.5)
+            
             if frm is None:
-                time.sleep(0.05)
+                # If no fresh frame and camera not available, break
+                if not camera.available:
+                    break
+                # Brief sleep and try again
+                time.sleep(0.02)
                 continue
+            
+            # Prevent sending identical frames repeatedly
+            if frm == last_frame:
+                frame_repeat_count += 1
+                if frame_repeat_count > max_repeats:
+                    time.sleep(0.02)
+                    continue
+            else:
+                frame_repeat_count = 0
+                last_frame = frm
+            
             yield (
                 b"--" + boundary + b"\r\n"
                 b"Content-Type: image/jpeg\r\n"
                 b"Cache-Control: no-cache\r\n\r\n" +
                 frm + b"\r\n"
             )
+            
+            # Small delay to prevent overwhelming the client
+            time.sleep(0.02)
 
     return Response(gen(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
@@ -67,17 +87,20 @@ def snapshot_jpeg():
         except Exception:
             pass
 
-    # Wait briefly for a frame
-    t0 = time.time()
-    frm = None
-    while time.time() - t0 < 2.0:
-        frm = camera.get_jpeg()
-        if frm:
-            break
-        time.sleep(0.05)
+    # Try to get a recent frame from buffer (non-blocking)
+    frm = camera.get_jpeg_async(max_age_seconds=1.0)
+    
+    # If no recent frame available, fall back to blocking call with short timeout
+    if frm is None:
+        t0 = time.time()
+        while time.time() - t0 < 1.0:  # Reduced timeout
+            frm = camera.get_jpeg_async(max_age_seconds=2.0)
+            if frm:
+                break
+            time.sleep(0.02)  # Shorter sleep
 
     if not frm:
-        abort(503, "No frame")
+        abort(503, "No frame available")
 
     resp = Response(frm, mimetype="image/jpeg")
     # Cache-busting headers
@@ -85,3 +108,9 @@ def snapshot_jpeg():
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
     return resp
+
+@webcam_bp.route("/camera/stats")
+def camera_stats():
+    """Get camera buffer statistics for monitoring and debugging"""
+    stats = camera.get_buffer_stats()
+    return {"ok": True, "stats": stats}

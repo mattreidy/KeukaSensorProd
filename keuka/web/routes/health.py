@@ -141,7 +141,11 @@ def build_health_payload() -> dict:
             "lon": None if (lon != lon) else round(lon, 6),
             "elevation_ft": None if (elev_ft != elev_ft) else round(elev_ft, 1),
         },
-        "camera": "running" if camera.running else "idle",
+        "camera": {
+            "status": "running" if camera.running else "idle",
+            "available": camera.available,
+            "buffer_stats": camera.get_buffer_stats()
+        },
         "wifi_sta": st,
         "wifi_ap": ap,
         "ifaces": {"sta": WLAN_STA_IFACE, "ap": WLAN_AP_IFACE},
@@ -263,6 +267,10 @@ def health():
 
         <div class="card">
           <h3 style="margin-top:0">Webcam</h3>
+          <table style="margin-bottom:.8rem">
+            <tr><th>Buffer Size</th><td><span id="bufferSize"></span> / <span id="maxBuffer"></span></td></tr>
+            <tr><th>Frame Age</th><td><span id="frameAge"></span>s</td></tr>
+          </table>
           <a href="/webcam" title="Open live stream">
             <img id="thumb" class="thumb" src="/snapshot?cb=0" alt="Webcam snapshot (click to open)" onerror="this.style.display='none'">
           </a>
@@ -472,7 +480,18 @@ def health():
           upDownFlash(distEl, "distanceInches", data.distanceInches);
 
           const camBadge = document.getElementById('cameraBadge');
-          setBadge(camBadge, (data.camera==="running"?"ok":"idle"), (data.camera==="running"?"Running":"Idle"));
+          const camData = data.camera || {{}};
+          const isRunning = camData.status === "running" && camData.available;
+          setBadge(camBadge, (isRunning ? "ok" : "idle"), (isRunning ? "Running" : "Idle"));
+          
+          // Update camera buffer stats
+          const bufStats = camData.buffer_stats || {{}};
+          document.getElementById('bufferSize').textContent = fmt(bufStats.buffer_size, "0");
+          document.getElementById('maxBuffer').textContent = fmt(bufStats.max_buffer_size, "0");
+          document.getElementById('frameAge').textContent = 
+            (bufStats.last_frame_age !== undefined && isFinite(bufStats.last_frame_age)) 
+            ? bufStats.last_frame_age.toFixed(1) 
+            : "∞";
 
           // GPS (now in Location section)
           const gps = data.gps || {{}};
@@ -550,8 +569,18 @@ def health():
           document.getElementById('memUsed').textContent  = bytes(m.used||0);
           document.getElementById('memFree').textContent  = bytes(m.free||0);
 
+          // Smart thumbnail refresh - only update if camera is producing fresh frames
           const th = document.getElementById('thumb');
-          if (th && th.style.display!=="none") {{ th.src = "/snapshot?cb=" + Date.now(); }}
+          if (th && th.style.display!=="none") {{
+            const bufStats = camData.buffer_stats || {{}};
+            const frameAge = bufStats.last_frame_age || Infinity;
+            const bufferSize = bufStats.buffer_size || 0;
+            
+            // Only refresh thumbnail if we have fresh frames (< 5 seconds old) and active buffer
+            if (frameAge < 5 && bufferSize > 0) {{
+              th.src = "/snapshot?cb=" + Date.now();
+            }}
+          }}
 
           // Contact (populate only once per page load; not on every refresh)
           if (!contactInitialized) {{
