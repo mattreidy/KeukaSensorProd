@@ -25,6 +25,7 @@ from ...camera import camera
 from ...sensors import read_temp_fahrenheit, median_distance_inches, read_gps_lat_lon_elev
 from ...wifi_net import wifi_status, ip_addr4, gw4, dns_servers
 from ...system_diag import cpu_temp_c, uptime_seconds, disk_usage_root, mem_usage
+from ...core.log_reader import log_reader
 
 health_bp = Blueprint("health", __name__)
 
@@ -328,6 +329,57 @@ def health():
 
       </div>
 
+      <!-- Log Viewer Section -->
+      <div class="card" style="margin-top:1rem">
+        <div class="flex" style="align-items:center;justify-content:space-between;margin-bottom:.8rem">
+          <div class="flex" style="align-items:center;gap:.8rem">
+            <strong>Recent Log Entries</strong>
+            <button id="logToggle" class="btn" onclick="toggleLogSection()">▼ Expand</button>
+            <span id="logStats" class="muted">—</span>
+          </div>
+          <div class="flex" style="align-items:center;gap:.4rem">
+            <button id="refreshLogs" class="btn" onclick="loadLogs()" style="display:none">🔄 Refresh</button>
+            <select id="logLevel" onchange="loadLogs()" style="display:none">
+              <option value="ERROR">Errors Only</option>
+              <option value="WARNING" selected>Warnings & Errors</option>
+              <option value="INFO">Info & Above</option>
+              <option value="DEBUG">All Logs</option>
+            </select>
+          </div>
+        </div>
+        
+        <div id="logSection" style="display:none">
+          <!-- Filter Controls -->
+          <div class="flex" style="gap:.8rem;margin-bottom:.8rem;flex-wrap:wrap">
+            <input id="logFilter" type="text" placeholder="Filter logs (sensor name, message, etc.)" style="flex:1;min-width:200px">
+            <select id="logHours" onchange="loadLogs()">
+              <option value="1">Last Hour</option>
+              <option value="6">Last 6 Hours</option>
+              <option value="24" selected>Last 24 Hours</option>
+              <option value="168">Last Week</option>
+            </select>
+            <button class="btn" onclick="clearLogFilter()">Clear Filter</button>
+          </div>
+          
+          <!-- Log Status -->
+          <div id="logStatus" class="muted" style="margin-bottom:.4rem">Loading logs...</div>
+          
+          <!-- Log Entries Container -->
+          <div id="logEntries" style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:.8rem;background:var(--card-bg)">
+            <div class="muted">No logs to display</div>
+          </div>
+          
+          <!-- Auto-refresh toggle -->
+          <div class="flex" style="align-items:center;gap:.8rem;margin-top:.8rem">
+            <label>
+              <input id="autoRefreshLogs" type="checkbox" checked onchange="toggleAutoRefresh()">
+              Auto-refresh every 30 seconds
+            </label>
+            <span id="lastLogRefresh" class="muted">—</span>
+          </div>
+        </div>
+      </div>
+
       <div class="card" style="margin-top:1rem">
         <div class="flex"><strong>Raw JSON</strong><button class="btn" onclick="copyJSON()">Copy</button><span id="copynote" class="muted"></span></div>
         <pre id="rawjson" class="mono" style="white-space:pre-wrap;margin-top:.4rem"></pre>
@@ -616,6 +668,180 @@ def health():
           once(); setInterval(once, 5000);
         }}
         connectSSE();
+        
+        // ---- Log Viewer Functionality ----
+        let logSectionExpanded = false;
+        let autoRefreshInterval = null;
+        let filterTimeout = null;
+        
+        function toggleLogSection() {{
+          const section = document.getElementById('logSection');
+          const toggle = document.getElementById('logToggle');
+          const refreshBtn = document.getElementById('refreshLogs');
+          const levelSelect = document.getElementById('logLevel');
+          
+          if (logSectionExpanded) {{
+            section.style.display = 'none';
+            toggle.textContent = '▼ Expand';
+            refreshBtn.style.display = 'none';
+            levelSelect.style.display = 'none';
+            stopAutoRefresh();
+          }} else {{
+            section.style.display = 'block';
+            toggle.textContent = '▲ Collapse';
+            refreshBtn.style.display = 'inline-block';
+            levelSelect.style.display = 'inline-block';
+            loadLogs();
+            startAutoRefresh();
+          }}
+          logSectionExpanded = !logSectionExpanded;
+        }}
+        
+        async function loadLogs() {{
+          const statusEl = document.getElementById('logStatus');
+          const entriesEl = document.getElementById('logEntries');
+          
+          try {{
+            statusEl.textContent = 'Loading logs...';
+            
+            const level = document.getElementById('logLevel').value;
+            const hours = document.getElementById('logHours').value;
+            const filter = document.getElementById('logFilter').value;
+            
+            let url = `/health/logs?level=${{level}}&hours=${{hours}}&max_entries=100`;
+            if (filter) {{
+              url += `&filter=${{encodeURIComponent(filter)}}`;
+            }}
+            
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            if (data.ok && data.logs) {{
+              renderLogEntries(data.logs);
+              updateLogStats(data);
+              statusEl.textContent = `${{data.total_entries}} entries found`;
+            }} else {{
+              entriesEl.innerHTML = `<div class="muted">Error loading logs: ${{data.error || 'Unknown error'}}</div>`;
+              statusEl.textContent = 'Error loading logs';
+            }}
+            
+            document.getElementById('lastLogRefresh').textContent = `Last updated: ${{new Date().toLocaleTimeString()}}`;
+            
+          }} catch (error) {{
+            entriesEl.innerHTML = `<div class="muted">Network error loading logs</div>`;
+            statusEl.textContent = 'Network error';
+          }}
+        }}
+        
+        function renderLogEntries(logs) {{
+          const entriesEl = document.getElementById('logEntries');
+          
+          if (!logs || logs.length === 0) {{
+            entriesEl.innerHTML = '<div class="muted">No log entries found</div>';
+            return;
+          }}
+          
+          const html = logs.map(entry => {{
+            const levelClass = entry.level.toLowerCase();
+            const ageText = entry.age_seconds < 60 ? 
+              `${{entry.age_seconds}}s ago` : 
+              entry.age_seconds < 3600 ? 
+              `${{Math.floor(entry.age_seconds / 60)}}m ago` : 
+              `${{Math.floor(entry.age_seconds / 3600)}}h ago`;
+              
+            return `
+              <div class="log-entry log-${{levelClass}}" style="margin-bottom:.6rem;padding:.4rem;border-radius:4px;border-left:3px solid var(--${{levelClass === 'error' ? 'red' : levelClass === 'warning' ? 'orange' : 'blue'}})">
+                <div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:.2rem">
+                  <span class="log-level badge b-${{levelClass === 'error' ? 'crit' : levelClass === 'warning' ? 'warn' : 'ok'}}">${{entry.level}}</span>
+                  <span class="muted" style="font-size:.85em">${{entry.timestamp_local}} (${{ageText}})</span>
+                </div>
+                <div class="log-logger muted" style="font-size:.9em;margin-bottom:.2rem">${{entry.logger}}</div>
+                <div class="log-message">${{entry.message}}</div>
+              </div>
+            `;
+          }}).join('');
+          
+          entriesEl.innerHTML = html;
+          // Auto-scroll to top to see newest entries
+          entriesEl.scrollTop = 0;
+        }}
+        
+        function updateLogStats(data) {{
+          const statsEl = document.getElementById('logStats');
+          if (data.total_entries > 0) {{
+            statsEl.textContent = `${{data.total_entries}} entries`;
+          }} else {{
+            statsEl.textContent = 'No entries';
+          }}
+        }}
+        
+        function clearLogFilter() {{
+          document.getElementById('logFilter').value = '';
+          loadLogs();
+        }}
+        
+        function startAutoRefresh() {{
+          if (document.getElementById('autoRefreshLogs').checked) {{
+            autoRefreshInterval = setInterval(() => {{
+              if (logSectionExpanded) {{
+                loadLogs();
+              }}
+            }}, 30000); // 30 seconds
+          }}
+        }}
+        
+        function stopAutoRefresh() {{
+          if (autoRefreshInterval) {{
+            clearInterval(autoRefreshInterval);
+            autoRefreshInterval = null;
+          }}
+        }}
+        
+        function toggleAutoRefresh() {{
+          stopAutoRefresh();
+          if (logSectionExpanded) {{
+            startAutoRefresh();
+          }}
+        }}
+        
+        // Add debounced filter input
+        document.getElementById('logFilter').addEventListener('input', function() {{
+          clearTimeout(filterTimeout);
+          filterTimeout = setTimeout(loadLogs, 500); // Wait 500ms after typing stops
+        }});
+        
+        // Load log stats on page load
+        async function loadLogStats() {{
+          try {{
+            const response = await fetch('/health/logs/stats');
+            const data = await response.json();
+            
+            if (data.ok && data.stats) {{
+              const stats = data.stats;
+              let statsText = '';
+              
+              if (stats.total_entries > 0) {{
+                const errorCount = stats.by_level.ERROR || 0;
+                const warningCount = stats.by_level.WARNING || 0;
+                
+                if (errorCount > 0 || warningCount > 0) {{
+                  statsText = `${{errorCount}} errors, ${{warningCount}} warnings (24h)`;
+                }} else {{
+                  statsText = `${{stats.total_entries}} log entries (24h)`;
+                }}
+              }} else {{
+                statsText = 'No recent logs';
+              }}
+              
+              document.getElementById('logStats').textContent = statsText;
+            }}
+          }} catch (error) {{
+            // Silently fail - log stats are not critical
+          }}
+        }}
+        
+        // Load initial log stats
+        loadLogStats();
       </script>
     """
     return render_page("Keuka Sensor – Health", body, extra_head)
@@ -668,3 +894,70 @@ def health_contact():
     except Exception:
         # Even if persisting fails, return current on-disk view so UI can recover.
         return {"ok": False, "contact": contact_get()}, 500
+
+# -------- Log viewing endpoints --------
+@health_bp.route("/health/logs")
+def health_logs():
+    """Get recent log entries with filtering."""
+    try:
+        # Get query parameters
+        max_entries = min(int(request.args.get("max_entries", 50)), 200)  # Cap at 200
+        min_level = request.args.get("level", "WARNING").upper()
+        hours_back = min(int(request.args.get("hours", 24)), 168)  # Cap at 1 week
+        filter_text = request.args.get("filter", "").strip()
+        
+        # Validate log level
+        if min_level not in ["DEBUG", "INFO", "WARNING", "ERROR"]:
+            min_level = "WARNING"
+        
+        # Get log entries
+        if filter_text:
+            entries = log_reader.get_entries_by_filter(
+                filter_text=filter_text,
+                max_entries=max_entries,
+                min_level=min_level
+            )
+        else:
+            entries = log_reader.get_recent_entries(
+                max_entries=max_entries,
+                min_level=min_level,
+                hours_back=hours_back
+            )
+        
+        # Convert to JSON-serializable format
+        log_data = [entry.to_dict() for entry in entries]
+        
+        return {
+            "ok": True,
+            "logs": log_data,
+            "total_entries": len(log_data),
+            "filters": {
+                "max_entries": max_entries,
+                "min_level": min_level,
+                "hours_back": hours_back,
+                "filter_text": filter_text
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "logs": []
+        }, 500
+
+@health_bp.route("/health/logs/stats")
+def health_log_stats():
+    """Get log statistics for monitoring."""
+    try:
+        stats = log_reader.get_log_stats()
+        return {
+            "ok": True,
+            "stats": stats
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "stats": {}
+        }, 500
