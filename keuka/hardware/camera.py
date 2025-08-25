@@ -17,8 +17,12 @@ import os
 import sys
 import time
 import threading
+import asyncio
+import logging
 from collections import deque
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # ---------------- Configuration ----------------
 
@@ -343,6 +347,35 @@ class Camera:
                 return None
                 
             return frame_data
+    
+    async def get_jpeg_async_await(self, max_age_seconds: float = 1.0, 
+                                   timeout: float = 5.0) -> Optional[bytes]:
+        """
+        Asynchronously wait for a fresh frame from the buffer.
+        
+        Args:
+            max_age_seconds: Maximum acceptable age of frame
+            timeout: Maximum time to wait for a fresh frame
+            
+        Returns:
+            Fresh frame data or None on timeout
+        """
+        return await asyncio.to_thread(self._wait_for_fresh_frame, max_age_seconds, timeout)
+    
+    def _wait_for_fresh_frame(self, max_age_seconds: float, timeout: float) -> Optional[bytes]:
+        """Wait for a fresh frame (blocking helper for async operation)"""
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            frame = self.get_jpeg_async(max_age_seconds)
+            if frame is not None:
+                return frame
+                
+            # Brief sleep to avoid busy waiting
+            time.sleep(0.01)
+        
+        logger.warning(f"Camera frame timeout after {timeout}s")
+        return None
     
     def get_buffer_stats(self) -> dict:
         """Get buffer statistics for monitoring"""
