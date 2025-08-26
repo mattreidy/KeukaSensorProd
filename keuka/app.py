@@ -2,7 +2,7 @@
 # ----------------------------------------------------------------------------
 # Application factory for the Keuka Sensor web app.
 # - Creates a Flask app instance.
-# - Registers all route blueprints (root, webcam, admin, health, duckdns).
+# - Registers all route blueprints (root, webcam, admin, health).
 # - Initializes Socket.IO and registers the SSH terminal blueprint & namespace.
 # - Keeps configuration centralized in config.py.
 # -----------------------------------------------------------------------------
@@ -15,7 +15,6 @@ from .routes_root import root_bp
 from .routes_webcam import webcam_bp
 from .routes_admin import admin_bp
 from .routes_health import health_bp
-from .routes_duckdns import duckdns_bp
 
 # Socket.IO (shared instance) and terminal integration
 from .socketio_ext import socketio
@@ -36,7 +35,6 @@ def create_app() -> Flask:
     app.register_blueprint(webcam_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(health_bp)
-    app.register_blueprint(duckdns_bp)
 
     # Initialize Socket.IO and add the terminal page + namespace
     socketio.init_app(app)

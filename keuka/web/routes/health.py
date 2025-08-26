@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, Response, request
 
 from ...ui import render_page
-from ...utils import utcnow_str, read_text
+from ...core.utils import utcnow_str, read_text
 from ...config import (
     APP_DIR,
     WLAN_STA_IFACE, WLAN_AP_IFACE, VERSION,

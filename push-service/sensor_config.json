@@ -1,9 +1,9 @@
 {
   "server_url": "https://keuka.org/api/sensors/data",
-  "sensor_name": "keukasensor1",
+  "device_name": "sensor2",
   "upload_timeout": 30,
   "max_upload_batch": 50,
-  "fixed_latitude": 42.606,
-  "fixed_longitude": -77.091,
-  "fixed_elevation": 710
+  "fallback_latitude": 42.606,
+  "fallback_longitude": -77.091,
+  "fallback_elevation": 710
 }

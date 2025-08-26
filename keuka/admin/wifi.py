@@ -22,6 +22,7 @@ from flask import Blueprint, jsonify, request
 
 from ..ui import render_page
 from ..config import WLAN_STA_IFACE, WLAN_AP_IFACE
+from ..core.utils import get_device_name, set_device_name
 from ..wifi_net import (
     wifi_scan, wifi_connect, wifi_status_sta,
     ip_addr4, gw4, dns_servers, dhcpcd_current_mode, apply_network,
@@ -70,7 +71,6 @@ _WIFI_HTML_TMPL = """
   <div class="topnav" style="margin:.4rem 0 .8rem 0;">
     <a href="/admin/wifi"><strong>Wi-Fi</strong></a>
     <a href="/admin/update">Update Code</a>
-    <a href="/admin/duckdns">DuckDNS</a>
     <a href="/admin/terminal" target="_blank" rel="noopener">Open SSH Terminal</a>
   </div>
 
@@ -127,45 +127,23 @@ _WIFI_HTML_TMPL = """
       <pre id="status" class="mono" style="white-space:pre-wrap;margin-top:.4rem"></pre>
     </div>
 
-    <!-- DuckDNS + Public IP card -->
+    <!-- Device Name Configuration -->
     <div class="card">
-      <h3 style="margin-top:0">DuckDNS &amp; Public IP</h3>
-
-      <div class="flex" style="gap:.5rem;flex-wrap:wrap;margin:.3rem 0 .6rem 0">
-        <div style="min-width:260px;flex:1">
-          <label>DuckDNS Subdomain(s) <span class="muted">(comma separated)</span></label>
-          <input id="dd_domains" type="text" placeholder="e.g. keukasensor1,backupname">
-        </div>
-        <div style="min-width:260px;flex:1">
-          <label>DuckDNS Token</label>
-          <input id="dd_token" type="password" placeholder="DuckDNS account token">
+      <h3 style="margin-top:0">Device Configuration</h3>
+      
+      <div style="max-width:420px;margin:.3rem 0 .6rem 0">
+        <label>Device Name <span class="muted">(used for sensor data identification)</span></label>
+        <input id="device_name" type="text" placeholder="e.g. sensor1, sensor2" maxlength="32">
+        <div style="margin:.3rem 0">
+          <button class="btn" id="device_name_save">Save Device Name</button>
+          <span id="device_name_status" class="muted"></span>
         </div>
       </div>
+    </div>
 
-      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.2rem 0 .6rem 0">
-        <button class="btn" id="dd_btn_save">Save</button>
-        <button class="btn" id="dd_btn_run">Run update now</button>
-        <button class="btn" id="dd_btn_toggle">Toggle hourly timer</button>
-        <span class="muted" id="dd_busy" style="display:none">Working…</span>
-      </div>
-
-      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem">
-        <div>Status (service, oneshot): <span id="dd_svc" class="muted">—</span></div>
-        <div>Timer: <span id="dd_tmr" class="muted">—</span></div>
-        <div>Next run: <span id="dd_next" class="muted">—</span></div>
-        <div>Last result: <span id="dd_res" class="muted">—</span></div>
-      </div>
-
-      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem;margin-top:.4rem">
-        <div>Last DuckDNS update: <span id="dd_last" class="muted">—</span></div>
-        <div>SubState: <span id="dd_sub" class="muted">—</span></div>
-        <div>ExecMainStatus: <span id="dd_code" class="muted">—</span></div>
-        <div>Last start: <span id="dd_start" class="muted">—</span></div>
-        <div>Last exit: <span id="dd_exit" class="muted">—</span></div>
-      </div>
-
-      <hr style="margin:.8rem 0">
-
+    <!-- Public IP card -->
+    <div class="card">
+      <h3 style="margin-top:0">Public IP</h3>
       <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem;margin-top:.4rem">
         <div>Current Public IP: <span id="wan_ip" class="mono">—</span></div>
         <div>Last Public IP change: <span id="wan_changed" class="muted">—</span></div>
@@ -314,117 +292,53 @@ _WIFI_HTML_TMPL = """
       }
     };
 
-    // --- DuckDNS helpers on this page (reuses /api/duckdns/* endpoints) ---
-    async function dd_load() {
+
+    // --- Device Name functions ---
+    async function device_name_load() {
       try {
-        const r = await fetch('/api/duckdns/status', { cache: 'no-store' });
-        if (r.status === 401) throw new Error('auth required: open /admin/duckdns once');
+        const r = await fetch('/api/device/name', { cache: 'no-store' });
         const j = await r.json();
-        if (!j.ok) throw new Error(j.error || 'status failed');
-
-        q('#dd_svc').innerHTML = j.service_active ? '<span class="ok">running</span>' : '<span class="muted">inactive</span>';
-        q('#dd_tmr').textContent = (j.timer_enabled ? 'enabled' : 'disabled') + ' / ' + (j.timer_active ? 'active' : 'inactive') ;
-
-        setTimeField('dd_next', j.timer_next || null);
-
-        if (j.last_result === 'OK') q('#dd_res').innerHTML = '<span class="ok">OK</span>';
-        else if (j.last_result === 'KO') q('#dd_res').innerHTML = '<span class="bad">KO</span>';
-        else q('#dd_res').textContent = '—';
-
-        setTimeField('dd_last', (j.last && j.last.when) ? j.last.when : null);
-        q('#dd_sub').textContent = j.service_substate || '—';
-        q('#dd_code').textContent = (j.service_exec_status == null) ? '—' : String(j.service_exec_status);
-        setTimeField('dd_start', j.service_started_at || null);
-        setTimeField('dd_exit',  j.service_exited_at  || null);
-
+        if (j.ok && j.device_name) {
+          document.getElementById('device_name').value = j.device_name;
+        }
       } catch (e) {
-        q('#dd_svc').textContent = '(unavailable)';
-        q('#dd_tmr').textContent = '(unavailable)';
-        q('#dd_next').textContent = '—';
-        q('#dd_res').textContent = '—';
-        q('#dd_last').textContent = '—';
-        q('#dd_sub').textContent = '—';
-        q('#dd_code').textContent = '—';
-        q('#dd_start').textContent = '—';
-        q('#dd_exit').textContent = '—';
-        console.debug('duckdns status:', e.message);
+        console.debug('device name load:', e.message);
       }
     }
 
-    function updateToggleLabel() {
-      const b = document.getElementById('dd_btn_toggle');
-      if (!b) return;
-      const cur = b.textContent || '';
-      // keep existing label if already set by prior state
-      if (cur.includes('Enable') || cur.includes('Disable')) return;
-      b.textContent = 'Toggle hourly timer';
-    }
-
-    async function dd_save() {
-      const body = {
-        domains: document.getElementById('dd_domains').value.trim(),
-        token:   document.getElementById('dd_token').value.trim()
-      };
-      document.getElementById('dd_busy').style.display = 'inline';
+    async function device_name_save() {
+      const name = document.getElementById('device_name').value.trim();
+      if (!name) {
+        document.getElementById('device_name_status').textContent = 'Device name cannot be empty';
+        return;
+      }
+      
+      document.getElementById('device_name_status').textContent = 'Saving...';
       try {
-        const r = await fetch('/api/duckdns/save', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+        const r = await fetch('/api/device/name', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device_name: name })
         });
-        if (r.status === 401) throw new Error('auth required');
         const j = await r.json();
-        if (!j.ok) throw new Error(j.error || 'save failed');
-        await dd_load();
+        if (j.ok) {
+          document.getElementById('device_name_status').innerHTML = '<span style="color: var(--ok)">Saved</span>';
+          // Refresh page header to show new name
+          setTimeout(() => location.reload(), 1000);
+        } else {
+          document.getElementById('device_name_status').innerHTML = '<span style="color: var(--crit)">Error: ' + (j.error || 'save failed') + '</span>';
+        }
       } catch (e) {
-        alert('DuckDNS save failed: ' + e.message);
-      } finally {
-        document.getElementById('dd_busy').style.display = 'none';
-      }
-    }
-
-    async function dd_run() {
-      document.getElementById('dd_busy').style.display = 'inline';
-      try {
-        const r = await fetch('/api/duckdns/run', { method: 'POST' });
-        if (r.status === 401) throw new Error('auth required');
-        const j = await r.json();
-        if (!j.ok) throw new Error(j.error || 'run failed');
-        await new Promise(res => setTimeout(res, 900));
-        await dd_load();
-      } catch (e) {
-        alert('DuckDNS run failed: ' + e.message);
-      } finally {
-        document.getElementById('dd_busy').style.display = 'none';
-      }
-    }
-
-    async function dd_toggle() {
-      document.getElementById('dd_busy').style.display = 'inline';
-      try {
-        // we don't actually know current enabled state reliably here; just flip on server
-        const r = await fetch('/api/duckdns/timer', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: true })
-        });
-        if (r.status === 401) throw new Error('auth required');
-        const j = await r.json();
-        if (!j.ok) throw new Error(j.error || 'timer change failed');
-        await dd_load();
-      } catch (e) {
-        alert('DuckDNS timer change failed: ' + e.message);
-      } finally {
-        document.getElementById('dd_busy').style.display = 'none';
+        document.getElementById('device_name_status').innerHTML = '<span style="color: var(--crit)">Error: ' + e.message + '</span>';
       }
     }
 
     // wire buttons
-    document.getElementById('dd_btn_save').onclick = dd_save;
-    document.getElementById('dd_btn_run').onclick = dd_run;
-    document.getElementById('dd_btn_toggle').onclick = dd_toggle;
+    document.getElementById('device_name_save').onclick = device_name_save;
 
     // initial
     refreshStatus();
-    dd_load();
+    device_name_load();
     (function wan_loop(){
       fetch('/api/wanip',{cache:'no-store'}).then(r=>r.json()).then(j=>{
         document.getElementById('wan_ip').textContent = j.ip || '—';
@@ -494,3 +408,25 @@ def attach(bp: Blueprint) -> None:
     @bp.route("/api/ap_ssid")
     def api_ap_ssid():
         return jsonify({"iface": WLAN_AP_IFACE, "ssid": ap_ssid_current()})
+
+    @bp.route("/api/device/name", methods=["GET"])
+    def api_device_name_get():
+        device_name = get_device_name()
+        return jsonify({"ok": True, "device_name": device_name})
+
+    @bp.route("/api/device/name", methods=["POST"])
+    def api_device_name_set():
+        data = request.get_json(silent=True) or {}
+        device_name = (data.get("device_name") or "").strip()
+        
+        if not device_name:
+            return jsonify({"ok": False, "error": "Device name cannot be empty"}), 400
+        
+        if len(device_name) > 32:
+            return jsonify({"ok": False, "error": "Device name too long (max 32 characters)"}), 400
+        
+        success = set_device_name(device_name)
+        if success:
+            return jsonify({"ok": True})
+        else:
+            return jsonify({"ok": False, "error": "Invalid device name format (use only letters, numbers, dash, underscore)"}), 400

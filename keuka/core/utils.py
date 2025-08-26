@@ -65,41 +65,57 @@ def write_text_atomic(path: Path, content: str, sudo_mv: bool = False) -> bool:
         tmp.replace(path)
         return True
 
-def get_system_fqdn() -> str:
+def get_device_name() -> str:
     """
-    Get the system's FQDN, preferring DuckDNS domain if configured,
-    otherwise falling back to system hostname.
+    Get the device name from configuration, with fallbacks.
     """
-    # Try to read DuckDNS configuration
-    duckdns_conf = Path("/home/pi/KeukaSensorProd/configuration/services/duckdns.conf")
+    # Try to read device configuration
+    device_conf = Path("/home/pi/KeukaSensorProd/configuration/services/device.conf")
     try:
-        if duckdns_conf.exists():
-            conf_text = duckdns_conf.read_text(errors="replace")
+        if device_conf.exists():
+            conf_text = device_conf.read_text(errors="replace")
             for line in conf_text.splitlines():
                 s = line.strip()
                 if not s or s.startswith("#"):
                     continue
-                m = re.match(r"domains\s*=\s*(.*)$", s, re.IGNORECASE)
+                m = re.match(r"device_name\s*=\s*(.*)$", s, re.IGNORECASE)
                 if m:
-                    domains = m.group(1).strip().strip('"').strip("'")
-                    if domains:
-                        # Take first domain if multiple are listed
-                        first_domain = domains.split(",")[0].strip()
-                        if first_domain:
-                            # Add .duckdns.org if not already present
-                            if not first_domain.endswith(".duckdns.org"):
-                                first_domain += ".duckdns.org"
-                            return first_domain
+                    device_name = m.group(1).strip().strip('"').strip("'")
+                    if device_name:
+                        return device_name
     except Exception:
         pass
     
     # Fallback to system hostname
     try:
         hostname = subprocess.getoutput("hostname").strip()
-        if hostname:
+        if hostname and 'sensor' in hostname.lower():
             return hostname
     except Exception:
         pass
     
     # Last resort
-    return "unknown"
+    return "sensor1"
+
+def get_system_fqdn() -> str:
+    """
+    Get the device name for display purposes.
+    """
+    return get_device_name()
+
+def set_device_name(name: str) -> bool:
+    """
+    Set the device name in configuration file.
+    """
+    device_conf = Path("/home/pi/KeukaSensorProd/configuration/services/device.conf")
+    try:
+        # Validate device name (simple alphanumeric + underscore/dash)
+        if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+            return False
+        
+        content = f"device_name={name}\n"
+        device_conf.parent.mkdir(parents=True, exist_ok=True)
+        device_conf.write_text(content, encoding="utf-8")
+        return True
+    except Exception:
+        return False
