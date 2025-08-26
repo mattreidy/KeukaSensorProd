@@ -9,6 +9,8 @@
 #
 # SERVICES INSTALLED:
 #   - keuka-sensor.service: Main Flask application service
+#   - keuka-sensor-push.service: Sensor data push service
+#   - keuka-sensor-push.timer: Timer for periodic sensor data collection
 #   - duckdns-update.service: DuckDNS dynamic DNS updater
 #   - duckdns-update.timer: Timer for periodic DuckDNS updates
 #   - log-cleanup.service: Log cleanup and rotation service
@@ -143,6 +145,8 @@ validate_requirements() {
     # Check required service files exist in source
     local required_files=(
         "keuka-sensor.service"
+        "keuka-sensor-push.service"
+        "keuka-sensor-push.timer"
         "duckdns-update.service"
         "duckdns-update.timer"
         "log-cleanup.service"
@@ -210,6 +214,8 @@ install_services() {
     
     local service_files=(
         "keuka-sensor.service"
+        "keuka-sensor-push.service"
+        "keuka-sensor-push.timer"
         "duckdns-update.service"
         "duckdns-update.timer"
         "log-cleanup.service"
@@ -259,6 +265,7 @@ enable_services() {
     
     local services=(
         "keuka-sensor.service"
+        "keuka-sensor-push.timer"
         "duckdns-update.timer"
         "log-cleanup.timer"
     )
@@ -296,6 +303,7 @@ start_services() {
     
     # Only start the timers - the main service may need additional setup
     local services=(
+        "keuka-sensor-push.timer"
         "duckdns-update.timer"
         "log-cleanup.timer"
     )
@@ -337,6 +345,8 @@ show_status() {
     
     local services=(
         "keuka-sensor.service"
+        "keuka-sensor-push.service"
+        "keuka-sensor-push.timer"
         "duckdns-update.service"
         "duckdns-update.timer"
         "log-cleanup.service"
@@ -348,6 +358,83 @@ show_status() {
         systemctl status "$service" --no-pager --lines=0 2>/dev/null || echo "Service not active"
         echo
     done
+}
+
+# Update push service files in /opt/keuka
+update_push_service() {
+    log_info "Updating sensor push service files..."
+    
+    local push_service_dir="$REPO_ROOT/push-service"
+    local target_dir="/opt/keuka"
+    
+    # Check if push service source directory exists
+    if [[ ! -d "$push_service_dir" ]]; then
+        log_error "Push service source directory not found at: $push_service_dir"
+        return 1
+    fi
+    
+    # Create target directory if it doesn't exist
+    if [[ "$DRY_RUN" == "false" ]]; then
+        if [[ ! -d "$target_dir" ]]; then
+            log_info "Creating $target_dir directory"
+            mkdir -p "$target_dir"
+            chown pi:pi "$target_dir"
+        fi
+    else
+        log_info "[DRY RUN] Would ensure $target_dir directory exists"
+    fi
+    
+    # Files to copy
+    local push_files=(
+        "sensor_push_service.py"
+        "local_storage.py"
+    )
+    
+    local failed=0
+    for file in "${push_files[@]}"; do
+        local source_path="$push_service_dir/$file"
+        local target_path="$target_dir/$file"
+        
+        if [[ ! -f "$source_path" ]]; then
+            log_error "Push service file not found: $source_path"
+            ((failed++))
+            continue
+        fi
+        
+        if [[ "$DRY_RUN" == "false" ]]; then
+            log_info "Updating $file"
+            cp "$source_path" "$target_path"
+            chmod 755 "$target_path"
+            chown pi:pi "$target_path"
+            log_success "Updated $file"
+        else
+            log_info "[DRY RUN] Would copy $source_path to $target_path"
+        fi
+    done
+    
+    # Copy keuka utils directory for coordinate parser
+    local keuka_utils_source="$REPO_ROOT/keuka/utils"
+    local keuka_utils_target="$target_dir/keuka/utils"
+    
+    if [[ -d "$keuka_utils_source" ]]; then
+        if [[ "$DRY_RUN" == "false" ]]; then
+            log_info "Updating keuka utils directory"
+            mkdir -p "$(dirname "$keuka_utils_target")"
+            cp -r "$keuka_utils_source" "$(dirname "$keuka_utils_target")/"
+            chown -R pi:pi "$target_dir/keuka"
+            log_success "Updated keuka utils directory"
+        else
+            log_info "[DRY RUN] Would copy $keuka_utils_source to $keuka_utils_target"
+        fi
+    fi
+    
+    if [[ $failed -gt 0 ]]; then
+        log_error "$failed push service file(s) failed to update"
+        return 1
+    fi
+    
+    log_success "Push service files updated successfully"
+    return 0
 }
 
 # Main installation function
@@ -362,6 +449,7 @@ main() {
     
     # Installation steps
     install_services || exit 4
+    update_push_service || exit 4
     reload_systemd || exit 4
     enable_services || exit 4
     start_services || exit 4

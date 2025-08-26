@@ -11,6 +11,7 @@ Usage: update_code_only.sh --root <APP_ROOT> --service <SERVICE_NAME> [--stage <
 
 Replaces ONLY the *.py files under <APP_ROOT>/keuka with those from a snapshot of <STAGE_DIR>/keuka,
 preserving non-Python files (e.g., static assets). Always prunes local *.py not present upstream.
+Also updates push service files in /opt/keuka from push-service/ directory.
 If SNAP_DIR is provided (env), the script REUSES that snapshot and does not require --stage.
 
 Environment variables:
@@ -207,6 +208,54 @@ prune_removed_py() {
   echo "[update_code_only] pruned ${pruned} files."
 }
 
+update_push_service_files() {
+  echo "[update_code_only] updating push service files in /opt/keuka"
+  
+  local PUSH_SRC_DIR="${STAGE_DIR}/push-service"
+  local PUSH_DST_DIR="/opt/keuka"
+  
+  if [[ ! -d "${PUSH_SRC_DIR}" ]]; then
+    echo "[update_code_only] WARNING: push-service directory not found at ${PUSH_SRC_DIR}, skipping"
+    return 0
+  fi
+  
+  # Create target directory if it doesn't exist
+  mkdir -p "${PUSH_DST_DIR}"
+  chown pi:pi "${PUSH_DST_DIR}" || true
+  
+  # Files to update
+  local push_files=("sensor_push_service.py" "local_storage.py")
+  local updated=0
+  
+  for file in "${push_files[@]}"; do
+    local src="${PUSH_SRC_DIR}/${file}"
+    local dst="${PUSH_DST_DIR}/${file}"
+    
+    if [[ -f "${src}" ]]; then
+      echo "[update_code_only] updating push service file: ${file}"
+      cp "${src}" "${dst}"
+      chmod 755 "${dst}"
+      chown pi:pi "${dst}" || true
+      updated=$((updated+1))
+    else
+      echo "[update_code_only] WARNING: push service file not found: ${src}"
+    fi
+  done
+  
+  # Copy keuka utils directory for coordinate parser
+  local utils_src="${STAGE_DIR}/keuka/utils"
+  local utils_dst="${PUSH_DST_DIR}/keuka/utils"
+  
+  if [[ -d "${utils_src}" ]]; then
+    echo "[update_code_only] updating keuka utils directory"
+    mkdir -p "$(dirname "${utils_dst}")"
+    cp -r "${utils_src}" "$(dirname "${utils_dst}")/"
+    chown -R pi:pi "${PUSH_DST_DIR}/keuka" || true
+  fi
+  
+  echo "[update_code_only] updated ${updated} push service files."
+}
+
 rollback() {
   echo "[update_code_only] ROLLBACK starting..."
   restore_from_backup
@@ -233,6 +282,7 @@ do_apply() {
   backup_current_py
   copy_python_files
   prune_removed_py
+  update_push_service_files
   write_markers "${COMMIT_SHA:-}"
 
   echo "[update_code_only] restarting service: ${SERVICE_NAME}"
