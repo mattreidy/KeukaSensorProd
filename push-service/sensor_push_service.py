@@ -16,8 +16,14 @@ import pytz
 
 # Add the current directory to Python path for importing
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add the parent directory to import keuka sensors
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from local_storage import LocalSensorStorage
+
+# Import coordinate normalization utility
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'keuka'))
+from keuka.utils.coordinate_parser import normalize_gps_coordinates, is_valid_coordinate_pair
 
 class SensorPushService:
     def __init__(self, config_file="/opt/keuka/sensor_config.json"):
@@ -67,34 +73,82 @@ class SensorPushService:
         Returns dict with sensor data or None on error
         """
         try:
-            # This is a placeholder - replace with actual sensor reading code
-            # In the real implementation, this would interface with:
-            # - DS18B20 temperature sensor
-            # - JSN-SR04T ultrasonic distance sensor  
-            # - Turbidity sensor (when added)
-            # - GPS module for coordinates
+            # Import sensor modules from the existing keuka codebase
+            from keuka.sensors import read_temp_fahrenheit, median_distance_inches
+            from keuka.hardware.gps import read_gps_lat_lon_elev
             
-            # For now, return placeholder data structure
             ny_tz = pytz.timezone('America/New_York')
             current_time = datetime.now(ny_tz)
             
+            # Initialize sensor data structure with defaults
             sensor_data = {
-                "waterTempF": None,      # Will be filled by actual sensor reading
-                "waterLevelInches": None, # Will be filled by actual sensor reading
-                "turbidityNTU": None,    # Placeholder for future turbidity sensor
+                "waterTempF": None,
+                "waterLevelInches": None,
+                "turbidityNTU": None,  # Placeholder for future turbidity sensor
                 "latitude": self.config.get('fixed_latitude', 42.606),
                 "longitude": self.config.get('fixed_longitude', -77.091),
                 "elevationFeet": self.config.get('fixed_elevation', 710)
             }
             
-            # TODO: Replace these with actual sensor readings
-            # sensor_data["waterTempF"] = read_temperature_sensor()
-            # sensor_data["waterLevelInches"] = read_water_level_sensor()  
-            # sensor_data["turbidityNTU"] = read_turbidity_sensor()
+            # Read temperature sensor (DS18B20)
+            try:
+                temperature_f = read_temp_fahrenheit()
+                if temperature_f == temperature_f:  # Check for NaN
+                    sensor_data["waterTempF"] = round(temperature_f, 1)
+                    logging.debug(f"Temperature reading: {temperature_f}°F")
+                else:
+                    logging.warning("Temperature sensor returned NaN")
+            except Exception as e:
+                logging.error(f"Error reading temperature sensor: {e}")
+            
+            # Read ultrasonic distance sensor (JSN-SR04T)
+            try:
+                distance_inches = median_distance_inches(samples=11)  # Use median for stability
+                if distance_inches == distance_inches:  # Check for NaN
+                    sensor_data["waterLevelInches"] = round(distance_inches, 1)
+                    logging.debug(f"Distance reading: {distance_inches} inches")
+                else:
+                    logging.warning("Ultrasonic sensor returned NaN")
+            except Exception as e:
+                logging.error(f"Error reading ultrasonic sensor: {e}")
+            
+            # Read GPS coordinates if available (NEO-6M)
+            try:
+                gps_lat, gps_lon, gps_alt = read_gps_lat_lon_elev(duration_s=2.0)
+                
+                # Normalize GPS coordinates to handle various formats
+                norm_lat, norm_lon = normalize_gps_coordinates(gps_lat, gps_lon)
+                
+                if is_valid_coordinate_pair(norm_lat, norm_lon):
+                    sensor_data["latitude"] = round(norm_lat, 6)
+                    sensor_data["longitude"] = round(norm_lon, 6)
+                    if gps_alt == gps_alt:  # Check altitude for NaN
+                        # Convert meters to feet
+                        sensor_data["elevationFeet"] = round(gps_alt * 3.28084, 1)
+                    logging.info(f"GPS reading: {norm_lat}, {norm_lon}, {gps_alt}m")
+                else:
+                    # Check if we have string-based coordinates from config that need normalization
+                    config_lat = self.config.get('fixed_latitude')
+                    config_lon = self.config.get('fixed_longitude')
+                    if isinstance(config_lat, str) or isinstance(config_lon, str):
+                        norm_lat, norm_lon = normalize_gps_coordinates(config_lat, config_lon)
+                        if is_valid_coordinate_pair(norm_lat, norm_lon):
+                            sensor_data["latitude"] = round(norm_lat, 6)
+                            sensor_data["longitude"] = round(norm_lon, 6)
+                            logging.debug(f"Using normalized config coordinates: {norm_lat}, {norm_lon}")
+                        else:
+                            logging.debug("GPS reading not available, using fallback coordinates")
+                    else:
+                        logging.debug("GPS reading not available, using fallback coordinates")
+            except Exception as e:
+                logging.debug(f"GPS reading failed, using fallback coordinates: {e}")
             
             logging.info(f"Collected sensor data: {sensor_data}")
             return sensor_data
             
+        except ImportError as e:
+            logging.error(f"Failed to import sensor modules: {e}")
+            return None
         except Exception as e:
             logging.error(f"Failed to collect sensor data: {e}")
             return None

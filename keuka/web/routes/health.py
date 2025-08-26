@@ -93,6 +93,7 @@ def build_health_payload() -> dict:
     # Sensor readings (gracefully handle missing hardware)
     tF = read_temp_fahrenheit()
     dIn = median_distance_inches()
+    turbidity = None  # Placeholder for future turbidity sensor (not yet implemented)
 
     # GPS (lat, lon in degrees; alt in meters) -> convert elevation to feet
     lat, lon, alt_m = read_gps_lat_lon_elev()
@@ -137,6 +138,7 @@ def build_health_payload() -> dict:
         "time_utc": utcnow_str(),
         "tempF": None if (tF != tF) else round(tF, 2),
         "distanceInches": None if (dIn != dIn) else round(dIn, 2),
+        "turbidityNTU": None if (turbidity is None or turbidity != turbidity) else round(turbidity, 2),
         "gps": {
             "lat": None if (lat != lat) else round(lat, 6),
             "lon": None if (lon != lon) else round(lon, 6),
@@ -213,6 +215,7 @@ def health():
           <table>
             <tr><th>Temperature</th><td><span id="tempF"></span> °F <span id="tempBadge" class="badge"></span></td></tr>
             <tr><th>Distance</th><td><span id="distanceInches"></span> in</td></tr>
+            <tr><th>Turbidity</th><td><span id="turbidityNTU"></span> NTU <span class="muted">(not installed)</span></td></tr>
             <tr><th>Camera</th><td><span id="cameraBadge" class="badge"></span></td></tr>
           </table>
         </div>
@@ -530,6 +533,10 @@ def health():
           const distEl = document.getElementById('distanceInches');
           distEl.textContent = fmt(data.distanceInches);
           upDownFlash(distEl, "distanceInches", data.distanceInches);
+
+          const turbidityEl = document.getElementById('turbidityNTU');
+          turbidityEl.textContent = fmt(data.turbidityNTU);
+          upDownFlash(turbidityEl, "turbidityNTU", data.turbidityNTU);
 
           const camBadge = document.getElementById('cameraBadge');
           const camData = data.camera || {{}};
