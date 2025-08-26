@@ -5,8 +5,6 @@
 The Keuka Sensor system runs as multiple systemd services:
 
 - **keuka-sensor.service**: Main Flask application
-- **duckdns-update.service**: DuckDNS IP update (oneshot)
-- **duckdns-update.timer**: Periodic DuckDNS updates (5 minutes)
 - **log-cleanup.service**: Log cleanup (oneshot)
 - **log-cleanup.timer**: Daily log cleanup
 
@@ -17,7 +15,6 @@ The Keuka Sensor system runs as multiple systemd services:
 ```bash
 # Check all service status
 sudo systemctl status keuka-sensor.service
-sudo systemctl status duckdns-update.timer
 sudo systemctl status log-cleanup.timer
 
 # Start/Stop/Restart services
@@ -31,7 +28,6 @@ sudo systemctl disable keuka-sensor.service
 
 # View logs
 sudo journalctl -u keuka-sensor.service -f
-sudo journalctl -u duckdns-update.service -f
 ```
 
 ### Configuration Updates
@@ -61,7 +57,6 @@ Contains service-specific variables:
 
 Contains system-wide variables:
 - Application paths
-- DuckDNS configuration
 - Logging settings
 - Backup retention
 
@@ -81,7 +76,6 @@ Templates are available in `deployment/environment/`:
 
 # System logs
 sudo journalctl -u keuka-sensor.service
-sudo journalctl -u duckdns-update.service
 ```
 
 ### Log Cleanup
@@ -201,9 +195,6 @@ sudo systemctl restart keuka-sensor.service
 ip addr show
 ip route show
 
-# Test DuckDNS manually
-sudo -u pi /home/pi/KeukaSensorProd/deployment/scripts/duckdns_update.sh
-
 # Check Wi-Fi configuration
 iwconfig
 wpa_cli status
@@ -235,6 +226,5 @@ sudo systemctl reset-failed
 
 # Restart all services
 sudo systemctl restart keuka-sensor.service
-sudo systemctl restart duckdns-update.timer
 sudo systemctl restart log-cleanup.timer
 ```

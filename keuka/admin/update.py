@@ -42,7 +42,6 @@ def attach(bp: Blueprint) -> None:
           <div class="topnav" style="margin:.4rem 0 .8rem 0;">
             <a href="/admin/wifi">Wi-Fi</a>
             <a href="/admin/update"><strong>Update Code</strong></a>
-            <a href="/admin/duckdns">DuckDNS</a>
           </div>
 
           <div class="card">

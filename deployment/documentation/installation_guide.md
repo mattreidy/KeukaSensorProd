@@ -85,9 +85,6 @@ sudo nano /etc/default/keuka-sensor
 
 # Edit global configuration
 sudo nano /etc/keuka.env
-
-# Configure DuckDNS (optional)
-sudo nano /home/pi/KeukaSensorProd/configuration/services/duckdns.conf
 ```
 
 ### 6. Start Services
@@ -150,7 +147,6 @@ sudo usermod -a -G gpio pi
 
 ## Next Steps
 
-- Configure DuckDNS for remote access
 - Set up monitoring and alerts
 - Customize sensor thresholds
 - Install in weatherproof enclosure

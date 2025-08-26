@@ -88,7 +88,7 @@ The service uploads data in this JSON format:
     "elevationFeet": 710
   },
   "metadata": {
-    "fqdn": "keukasensor1.duckdns.org",
+    "fqdn": "keukasensor1.local",
     "localId": 12345
   }
 }

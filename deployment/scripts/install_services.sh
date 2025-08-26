@@ -11,8 +11,6 @@
 #   - keuka-sensor.service: Main Flask application service
 #   - keuka-sensor-push.service: Sensor data push service
 #   - keuka-sensor-push.timer: Timer for periodic sensor data collection
-#   - duckdns-update.service: DuckDNS dynamic DNS updater
-#   - duckdns-update.timer: Timer for periodic DuckDNS updates
 #   - log-cleanup.service: Log cleanup and rotation service
 #   - log-cleanup.timer: Timer for periodic log cleanup
 #
@@ -147,8 +145,6 @@ validate_requirements() {
         "keuka-sensor.service"
         "keuka-sensor-push.service"
         "keuka-sensor-push.timer"
-        "duckdns-update.service"
-        "duckdns-update.timer"
         "log-cleanup.service"
         "log-cleanup.timer"
     )
@@ -216,8 +212,6 @@ install_services() {
         "keuka-sensor.service"
         "keuka-sensor-push.service"
         "keuka-sensor-push.timer"
-        "duckdns-update.service"
-        "duckdns-update.timer"
         "log-cleanup.service"
         "log-cleanup.timer"
     )
@@ -266,7 +260,6 @@ enable_services() {
     local services=(
         "keuka-sensor.service"
         "keuka-sensor-push.timer"
-        "duckdns-update.timer"
         "log-cleanup.timer"
     )
     
@@ -304,7 +297,6 @@ start_services() {
     # Only start the timers - the main service may need additional setup
     local services=(
         "keuka-sensor-push.timer"
-        "duckdns-update.timer"
         "log-cleanup.timer"
     )
     
@@ -347,8 +339,6 @@ show_status() {
         "keuka-sensor.service"
         "keuka-sensor-push.service"
         "keuka-sensor-push.timer"
-        "duckdns-update.service"
-        "duckdns-update.timer"
         "log-cleanup.service"
         "log-cleanup.timer"
     )
@@ -468,7 +458,6 @@ main() {
     echo
     log_info "View service logs with:"
     log_info "  sudo journalctl -u keuka-sensor.service -f"
-    log_info "  sudo journalctl -u duckdns-update.service -f"
 }
 
 # Script entry point

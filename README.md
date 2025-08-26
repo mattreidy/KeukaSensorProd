@@ -25,9 +25,9 @@ sudo ./install.sh
 
 ## 0) Legacy HTTP Endpoints (compatibility preserved)
 
-- `GET /` → plain text: `waterTempF,medianDistanceInches,latitude,longitude,elevationFeet,fqdn` (GPS coordinates with 6 decimal places for lat/lon, FQDN from DuckDNS config).
+- `GET /` → plain text: `waterTempF,medianDistanceInches,latitude,longitude,elevationFeet,fqdn` (GPS coordinates with 6 decimal places for lat/lon, FQDN from system hostname).
 - `GET /health` → JSON with readings + status.
-- `GET /admin` (Basic Auth) → links to Wi‑Fi, Software Update, DuckDNS, Terminal
+- `GET /admin` (Basic Auth) → links to Wi‑Fi, Software Update
 
 Default admin credentials: **`admin/password`**.
 
@@ -121,8 +121,5 @@ Follow these connections to ensure reliable operation:
 
 - **App**: `/etc/systemd/system/keuka-sensor.service`  
 
-- **DuckDNS updater**:  
-  - `/etc/systemd/system/duckdns-update.service`  
-  - `/etc/systemd/system/duckdns-update.timer` (5‑minute interval)
 
 ---

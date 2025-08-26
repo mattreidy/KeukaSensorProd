@@ -3,7 +3,7 @@
 # Root ("/") route that provides sensor data in plaintext format:
 #   "<tempF>,<distanceInches>,<latitude>,<longitude>,<elevationFeet>,<fqdn>"
 # NaNs are reported as 0.00 for legacy compatibility.
-# FQDN is determined from DuckDNS configuration or system hostname.
+# FQDN is determined from system hostname.
 # -----------------------------------------------------------------------------
 
 from flask import Blueprint, make_response

@@ -73,14 +73,6 @@ ROTATION=0
         config_file.write_text(config_content.strip())
         return config_file
         
-    def create_test_duckdns_config(self, temp_dir: Path) -> Path:
-        """Create a test DuckDNS configuration file"""
-        config_content = """token=test-token-12345
-domains=test-domain1,test-domain2
-"""
-        config_file = temp_dir / "duckdns.conf"
-        config_file.write_text(config_content.strip())
-        return config_file
         
     def create_test_environment_file(self, temp_dir: Path) -> Path:
         """Create a test environment file"""
@@ -216,29 +208,6 @@ class TestDataGenerator:
             ]
         }
         
-    @staticmethod
-    def generate_duckdns_status_data() -> Dict[str, Any]:
-        """Generate mock DuckDNS status data"""
-        return {
-            "ok": True,
-            "conf": {
-                "domains": "test-domain1,test-domain2",
-                "token": "test-token-12345"
-            },
-            "service_active": False,
-            "timer_active": False,
-            "timer_enabled": False,
-            "timer_next": None,
-            "last_result": "OK",
-            "last": {
-                "when": "2023-08-22 09:00:00",
-                "text": "[INFO] DuckDNS update successful"
-            },
-            "service_substate": "dead",
-            "service_exec_status": 0,
-            "service_started_at": None,
-            "service_exited_at": "2023-08-22 09:00:05"
-        }
 
 
 def create_full_test_environment() -> TestConfigManager:
@@ -251,7 +220,6 @@ def create_full_test_environment() -> TestConfigManager:
     # Create all test configuration files
     config_manager.create_test_sensor_config(temp_dir)
     config_manager.create_test_camera_config(temp_dir)
-    config_manager.create_test_duckdns_config(temp_dir)
     config_manager.create_test_environment_file(temp_dir)
     
     # Set up test environment

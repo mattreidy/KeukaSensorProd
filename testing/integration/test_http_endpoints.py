@@ -138,8 +138,7 @@ class TestHTTPEndpoints:
         admin_endpoints = [
             '/admin',
             '/admin/wifi',
-            '/admin/update',
-            '/admin/duckdns'
+            '/admin/update'
         ]
         
         for endpoint in admin_endpoints:
@@ -239,8 +238,7 @@ class TestHTTPEndpointSafety:
         # These should be blocked or return safe responses in test mode
         dangerous_posts = [
             '/api/wifi/connect',  # Could change network config
-            '/admin/start_update',  # Could update code
-            '/api/duckdns/run'  # Could trigger external updates
+            '/admin/start_update'  # Could update code
         ]
         
         for endpoint in dangerous_posts:

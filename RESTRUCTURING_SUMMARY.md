@@ -15,7 +15,6 @@ KeukaSensorProd/
 │   │   ├── gunicorn.conf.py      # Moved from keuka/
 │   │   └── logging.conf          # New Python logging config
 │   ├── services/
-│   │   └── duckdns.conf          # Moved from config/
 │   └── templates/                # Configuration templates
 ├── deployment/
 │   ├── documentation/            # Deployment guides
@@ -27,12 +26,9 @@ KeukaSensorProd/
 │   │   └── setup_environment.sh
 │   ├── scripts/                  # Deployment scripts
 │   │   ├── cleanup_logs.sh
-│   │   ├── duckdns_update.sh
 │   │   ├── install_services.sh   # New service installer
 │   │   └── update_code_only.sh
 │   └── systemd/                  # Service definitions
-│       ├── duckdns-update.service
-│       ├── duckdns-update.timer
 │       ├── keuka-sensor.service
 │       ├── log-cleanup.service
 │       └── log-cleanup.timer
@@ -77,7 +73,6 @@ keuka/
 │   ├── routes/                  # Organized route modules
 │   │   ├── __init__.py
 │   │   ├── admin.py             # Admin routes (moved from routes_admin.py)
-│   │   ├── duckdns.py           # DuckDNS routes (moved from routes_duckdns.py)
 │   │   ├── health.py            # Health dashboard (moved from routes_health.py)
 │   │   ├── root.py              # Root routes (moved from routes_root.py)
 │   │   └── webcam.py            # Camera routes (moved from routes_webcam.py)

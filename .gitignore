@@ -209,7 +209,6 @@ yarn-error.log*
 .claude
 
 # Project-specific
-config/duckdns.conf
 testing/.pytest_cache
 testing/test_venv
 test_camera_buffer.py
