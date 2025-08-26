@@ -21,7 +21,7 @@ from .version import get_local_commit, get_remote_commit, short_sha
 REPO_URL = os.environ.get("KEUKA_REPO_URL", "https://github.com/mattreidy/KeukaSensorProd.git")
 APP_ROOT = os.environ.get("KEUKA_APP_ROOT", "/home/pi/KeukaSensorProd")
 SERVICE_NAME = os.environ.get("KEUKA_SERVICE_NAME", "keuka-sensor")
-UPDATE_SCRIPT = os.environ.get("KEUKA_UPDATE_SCRIPT", os.path.join(APP_ROOT, "scripts", "update_code_only.sh"))
+UPDATE_SCRIPT = os.environ.get("KEUKA_UPDATE_SCRIPT", os.path.join(APP_ROOT, "deployment", "scripts", "update_code_only.sh"))
 SUDO = os.environ.get("KEUKA_SUDO", "sudo")  # set "" to disable sudo
 
 LOG_DIR = os.path.join(APP_ROOT, "logs")
@@ -36,31 +36,6 @@ _STATE_RUNNING = "running"
 _STATE_SUCCESS = "success"
 _STATE_ERROR = "error"
 
-def _sweep_leftovers(self) -> None:
-    """Prune old staged/apply dirs to avoid slow disk creep."""
-    now = time.time()
-
-    def sweep_dir(root: str, prefix: str, max_age_secs: int = 6 * 3600) -> None:
-        try:
-            for name in os.listdir(root):
-                if not name.startswith(prefix):
-                    continue
-                path = os.path.join(root, name)
-                try:
-                    st = os.stat(path)
-                    if now - st.st_mtime > max_age_secs:
-                        shutil.rmtree(path, ignore_errors=True)
-                        self._log(f"Swept leftover snapshot: {path}")
-                except Exception:
-                    # best-effort; ignore
-                    pass
-        except FileNotFoundError:
-            pass
-
-    # SNAP_DIRs live under APP_ROOT/tmp/keuka_apply_*
-    sweep_dir(os.path.join(APP_ROOT, "tmp"), "keuka_apply_")
-    # Updater workdirs (already cleaned) — belt & suspenders
-    sweep_dir("/tmp", "keuka_update_")
 
 def _append_log_file(line: str) -> None:
     try:
@@ -115,6 +90,32 @@ class UpdateManager:
             if self._logs:
                 return self._state, list(self._logs), self._started_at, self._finished_at
         return self._state, _read_last_run_from_file(), self._started_at, self._finished_at
+
+    def _sweep_leftovers(self) -> None:
+        """Prune old staged/apply dirs to avoid slow disk creep."""
+        now = time.time()
+
+        def sweep_dir(root: str, prefix: str, max_age_secs: int = 6 * 3600) -> None:
+            try:
+                for name in os.listdir(root):
+                    if not name.startswith(prefix):
+                        continue
+                    path = os.path.join(root, name)
+                    try:
+                        st = os.stat(path)
+                        if now - st.st_mtime > max_age_secs:
+                            shutil.rmtree(path, ignore_errors=True)
+                            self._log(f"Swept leftover snapshot: {path}")
+                    except Exception:
+                        # best-effort; ignore
+                        pass
+            except FileNotFoundError:
+                pass
+
+        # SNAP_DIRs live under APP_ROOT/tmp/keuka_apply_*
+        sweep_dir(os.path.join(APP_ROOT, "tmp"), "keuka_apply_")
+        # Updater workdirs (already cleaned) — belt & suspenders
+        sweep_dir("/tmp", "keuka_update_")
 
     def start(self) -> bool:
         with self._lock:
