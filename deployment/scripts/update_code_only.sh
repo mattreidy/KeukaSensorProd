@@ -211,7 +211,8 @@ prune_removed_py() {
 update_push_service_files() {
   echo "[update_code_only] updating push service files in /opt/keuka"
   
-  local PUSH_SRC_DIR="${STAGE_DIR}/push-service"
+  # Use the APP_ROOT push-service directory since STAGE_DIR only contains keuka/
+  local PUSH_SRC_DIR="${APP_ROOT}/push-service"
   local PUSH_DST_DIR="/opt/keuka"
   
   if [[ ! -d "${PUSH_SRC_DIR}" ]]; then
@@ -243,7 +244,7 @@ update_push_service_files() {
   done
   
   # Copy keuka utils directory for coordinate parser
-  local utils_src="${STAGE_DIR}/keuka/utils"
+  local utils_src="${APP_ROOT}/keuka/utils"
   local utils_dst="${PUSH_DST_DIR}/keuka/utils"
   
   if [[ -d "${utils_src}" ]]; then
