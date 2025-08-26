@@ -1,0 +1,21 @@
+[Unit]
+Description=Keuka Sensor Data Push Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+Group=pi
+WorkingDirectory=/opt/keuka
+ExecStart=/usr/bin/python3 /opt/keuka/sensor_push_service.py
+Environment=PYTHONPATH=/opt/keuka
+StandardOutput=journal
+StandardError=journal
+
+# Restart policy (not needed for oneshot, but good for documentation)
+# RestartSec=60
+# Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

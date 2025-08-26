@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+"""
+Sensor push service that collects data locally and uploads to keuka.org server
+Handles network outages gracefully with local storage buffering
+"""
+
+import requests
+import json
+import time
+import logging
+import socket
+import sys
+import os
+from datetime import datetime
+import pytz
+
+# Add the current directory to Python path for importing
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from local_storage import LocalSensorStorage
+
+class SensorPushService:
+    def __init__(self, config_file="/opt/keuka/sensor_config.json"):
+        self.storage = LocalSensorStorage()
+        self.config = self.load_config(config_file)
+        self.server_url = self.config.get('server_url', 'https://keuka.org/api/sensors/data')
+        self.sensor_name = self.config.get('sensor_name', self.detect_sensor_name())
+        self.timeout = self.config.get('upload_timeout', 30)
+        
+        logging.info(f"Initialized sensor push service for {self.sensor_name}")
+        logging.info(f"Server URL: {self.server_url}")
+    
+    def load_config(self, config_file):
+        """Load configuration from JSON file with fallback defaults"""
+        default_config = {
+            'server_url': 'https://keuka.org/api/sensors/data',
+            'sensor_name': None,
+            'upload_timeout': 30,
+            'max_upload_batch': 50
+        }
+        
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                logging.info(f"Loaded configuration from {config_file}")
+                return {**default_config, **config}
+            except Exception as e:
+                logging.error(f"Error loading config file {config_file}: {e}")
+        else:
+            logging.info(f"Config file {config_file} not found, using defaults")
+        
+        return default_config
+    
+    def detect_sensor_name(self):
+        """Determine sensor name from hostname or config"""
+        hostname = socket.gethostname().lower()
+        if 'keukasensor' in hostname:
+            return hostname
+        
+        # Fallback: try to detect from network or use default
+        return "keukasensor1"
+    
+    def collect_sensor_data(self):
+        """
+        Collect current sensor readings from hardware
+        Returns dict with sensor data or None on error
+        """
+        try:
+            # This is a placeholder - replace with actual sensor reading code
+            # In the real implementation, this would interface with:
+            # - DS18B20 temperature sensor
+            # - JSN-SR04T ultrasonic distance sensor  
+            # - Turbidity sensor (when added)
+            # - GPS module for coordinates
+            
+            # For now, return placeholder data structure
+            ny_tz = pytz.timezone('America/New_York')
+            current_time = datetime.now(ny_tz)
+            
+            sensor_data = {
+                "waterTempF": None,      # Will be filled by actual sensor reading
+                "waterLevelInches": None, # Will be filled by actual sensor reading
+                "turbidityNTU": None,    # Placeholder for future turbidity sensor
+                "latitude": self.config.get('fixed_latitude', 42.606),
+                "longitude": self.config.get('fixed_longitude', -77.091),
+                "elevationFeet": self.config.get('fixed_elevation', 710)
+            }
+            
+            # TODO: Replace these with actual sensor readings
+            # sensor_data["waterTempF"] = read_temperature_sensor()
+            # sensor_data["waterLevelInches"] = read_water_level_sensor()  
+            # sensor_data["turbidityNTU"] = read_turbidity_sensor()
+            
+            logging.info(f"Collected sensor data: {sensor_data}")
+            return sensor_data
+            
+        except Exception as e:
+            logging.error(f"Failed to collect sensor data: {e}")
+            return None
+    
+    def store_reading_locally(self):
+        """
+        Collect sensor data and store it locally
+        Returns the local storage ID or None on failure
+        """
+        sensor_data = self.collect_sensor_data()
+        if sensor_data is None:
+            return None
+        
+        try:
+            reading_id = self.storage.store_reading(sensor_data)
+            logging.info(f"Stored reading locally with ID {reading_id}")
+            return reading_id
+        except Exception as e:
+            logging.error(f"Failed to store reading locally: {e}")
+            return None
+    
+    def upload_pending_readings(self):
+        """
+        Upload all pending readings to the server
+        Returns tuple (success_count, error_count)
+        """
+        max_batch = self.config.get('max_upload_batch', 50)
+        unuploaded = self.storage.get_unuploaded(limit=max_batch)
+        
+        if not unuploaded:
+            logging.debug("No pending readings to upload")
+            return 0, 0
+        
+        success_count = 0
+        error_count = 0
+        
+        logging.info(f"Attempting to upload {len(unuploaded)} pending readings")
+        
+        for reading_id, timestamp_ny, data_json in unuploaded:
+            try:
+                data = json.loads(data_json)
+                
+                payload = {
+                    "sensorName": self.sensor_name,
+                    "timestampNY": timestamp_ny,
+                    "data": data,
+                    "metadata": {
+                        "fqdn": f"{self.sensor_name}.duckdns.org",
+                        "localId": reading_id
+                    }
+                }
+                
+                response = requests.post(
+                    self.server_url,
+                    json=payload,
+                    timeout=self.timeout,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if response.status_code == 200:
+                    self.storage.mark_uploaded(reading_id)
+                    success_count += 1
+                    logging.debug(f"Uploaded reading {reading_id} successfully")
+                else:
+                    error_count += 1
+                    logging.error(f"Failed to upload reading {reading_id}: HTTP {response.status_code} - {response.text}")
+                    # Stop on first failure to maintain chronological order
+                    break
+                    
+            except requests.RequestException as e:
+                error_count += 1
+                logging.error(f"Network error uploading reading {reading_id}: {e}")
+                # Stop on network errors to avoid wasting time/battery
+                break
+            except Exception as e:
+                error_count += 1
+                logging.error(f"Unexpected error uploading reading {reading_id}: {e}")
+                # Stop on unexpected errors
+                break
+        
+        if success_count > 0:
+            logging.info(f"Successfully uploaded {success_count} readings")
+        if error_count > 0:
+            logging.warning(f"Failed to upload {error_count} readings")
+        
+        return success_count, error_count
+    
+    def cleanup_old_data(self):
+        """Clean up old uploaded data to save disk space"""
+        try:
+            deleted_count = self.storage.cleanup_old(days=7)  # Keep 7 days of uploaded data
+            if deleted_count > 0:
+                self.storage.vacuum_db()  # Reclaim disk space
+        except Exception as e:
+            logging.error(f"Error during cleanup: {e}")
+    
+    def get_status(self):
+        """Get current service status"""
+        stats = self.storage.get_stats()
+        return {
+            'sensor_name': self.sensor_name,
+            'server_url': self.server_url,
+            'storage_stats': stats,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    def run_cycle(self):
+        """
+        Complete sensor cycle: collect data, store locally, upload pending readings
+        This is the main function called by the systemd timer
+        """
+        logging.info("Starting sensor data collection and upload cycle")
+        
+        # Always collect and store current reading
+        reading_id = self.store_reading_locally()
+        if reading_id is None:
+            logging.error("Failed to collect/store sensor data")
+        
+        # Try to upload all pending readings
+        success_count, error_count = self.upload_pending_readings()
+        
+        # Periodic cleanup (only if we had successful uploads)
+        if success_count > 0:
+            self.cleanup_old_data()
+        
+        # Log summary
+        stats = self.storage.get_stats()
+        logging.info(f"Cycle complete. Stored: {reading_id is not None}, "
+                    f"Uploaded: {success_count}, Errors: {error_count}, "
+                    f"Pending: {stats['pending']}")
+        
+        return {
+            'reading_stored': reading_id is not None,
+            'uploads_successful': success_count,
+            'upload_errors': error_count,
+            'pending_readings': stats['pending']
+        }
+
+
+def main():
+    """Main entry point for the sensor push service"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Keuka Sensor Push Service')
+    parser.add_argument('--config', default='/opt/keuka/sensor_config.json',
+                       help='Path to configuration file')
+    parser.add_argument('--log-level', default='INFO',
+                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                       help='Logging level')
+    parser.add_argument('--status', action='store_true',
+                       help='Show service status and exit')
+    
+    args = parser.parse_args()
+    
+    # Configure logging
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    try:
+        service = SensorPushService(args.config)
+        
+        if args.status:
+            status = service.get_status()
+            print(json.dumps(status, indent=2))
+            return
+        
+        # Run the main cycle
+        result = service.run_cycle()
+        
+        # Exit with error code if there were problems
+        if not result['reading_stored'] and result['upload_errors'] > 0:
+            sys.exit(1)
+        
+    except Exception as e:
+        logging.error(f"Fatal error in sensor push service: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

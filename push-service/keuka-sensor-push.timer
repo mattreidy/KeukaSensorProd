@@ -1,0 +1,19 @@
+[Unit]
+Description=Run Keuka Sensor Push every 5 minutes
+Requires=keuka-sensor-push.service
+
+[Timer]
+# Start 2 minutes after boot
+OnBootSec=2min
+
+# Run every 5 minutes
+OnUnitActiveSec=5min
+
+# Allow some timing variance for better system performance
+AccuracySec=30sec
+
+# Ensure timer persists across reboots
+Persistent=true
+
+[Install]
+WantedBy=timers.target

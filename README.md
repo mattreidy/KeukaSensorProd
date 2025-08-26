@@ -1,10 +1,29 @@
 # Keuka Sensor by Matt Reidy © 2025 - All rights reserved.
 ![Keuka Sensor](docs/sensor.jpg)
 
+## 🆕 **NEW: Push-Based Data Collection (Recommended)**
+
+**Major Update**: This repository now includes a push-based data collection system that eliminates port forwarding requirements and provides network outage resilience.
+
+### Quick Start
+```bash
+# Deploy new push service (replaces HTTP server polling)
+cd push-service/
+sudo ./install.sh
+```
+
+### Key Benefits
+- ✅ **No port forwarding** required at sensor locations
+- ✅ **Network outage resilience** with local SQLite buffering
+- ✅ **Automatic 5-minute** data uploads via systemd timer
+- ✅ **Future turbidity sensor** support built-in
+- ✅ **Professional monitoring** and logging
+
+**📖 See [`push-service/README.md`](push-service/README.md) for complete documentation and [`push-service/SENSOR_IMPLEMENTATION_GUIDE.md`](push-service/SENSOR_IMPLEMENTATION_GUIDE.md) for integration details.**
 
 ---
 
-## 0) Endpoints (compatibility preserved)
+## 0) Legacy HTTP Endpoints (compatibility preserved)
 
 - `GET /` → plain text: `waterTempF,medianDistanceInches,latitude,longitude,elevationFeet,fqdn` (GPS coordinates with 6 decimal places for lat/lon, FQDN from DuckDNS config).
 - `GET /health` → JSON with readings + status.
