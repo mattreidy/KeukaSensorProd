@@ -137,14 +137,14 @@ class SensorPushService:
             # Get public IP address
             public_ip = self.get_public_ip()
             
-            # Initialize sensor data structure with fallback coordinates
+            # Initialize sensor data structure with null GPS coordinates
             sensor_data = {
                 "waterTempF": None,
                 "waterLevelInches": None,
                 "turbidityNTU": None,  # Placeholder for future turbidity sensor
-                "latitude": self.config.get('fallback_latitude', 42.606),
-                "longitude": self.config.get('fallback_longitude', -77.091),
-                "elevationFeet": self.config.get('fallback_elevation', 710),
+                "latitude": None,
+                "longitude": None,
+                "elevationFeet": None,
                 "publicIP": public_ip
             }
             
@@ -185,9 +185,9 @@ class SensorPushService:
                         sensor_data["elevationFeet"] = round(gps_alt * 3.28084, 1)
                     logging.info(f"Using live GPS reading: {norm_lat}, {norm_lon}, {gps_alt}m")
                 else:
-                    logging.info("GPS reading not available, using fallback coordinates from config")
+                    logging.info("GPS reading not available, sending null coordinates")
             except Exception as e:
-                logging.debug(f"GPS reading failed, using fallback coordinates: {e}")
+                logging.debug(f"GPS reading failed, sending null coordinates: {e}")
             
             logging.info(f"Collected sensor data: {sensor_data}")
             return sensor_data
