@@ -15,9 +15,11 @@
 import os
 import time
 import threading
+import uuid
+import json
 from functools import wraps
 
-from flask import Blueprint, request, render_template_string
+from flask import Blueprint, request, render_template_string, jsonify
 from flask_socketio import Namespace, emit
 import paramiko
 
@@ -107,10 +109,17 @@ PAGE_HTML = r"""
     fitAddon.fit();
     window.addEventListener('resize', () => fitAddon.fit());
 
+    // Universal HTTP-based terminal communication variables
+    let sessionId = null;
+    let pollInterval = null;
+
     function connectSSH() {
       setStatus('connecting…');
 
-      if (socket) { try { socket.close(); } catch(e){} }
+      // Clean up any existing session
+      if (sessionId) {
+        stopPolling();
+      }
 
       const payload = {
         host: document.getElementById('host').value.trim(),
@@ -118,37 +127,102 @@ PAGE_HTML = r"""
         username: document.getElementById('username').value.trim(),
         password: document.getElementById('password').value
       };
-
-      // Connect to our namespaced endpoint
-      socket = io("{{ ns_path }}");
-      socket.on('connect', function() {
-        setStatus('connected, starting ssh…');
-        socket.emit('ssh_start', payload);
-      });
-      socket.on('connect_error', (err) => {
-        setStatus('connect_error: ' + err.message);
-      });
-      socket.on('reconnect_error', (err) => {
-        setStatus('reconnect_error: ' + err.message);
-      });
-
-      socket.on('ssh_data', function(data) {
-        term.write(data);
-      });
-
-      socket.on('ssh_error', function(msg) {
-        setStatus('ssh_error: ' + msg);
-        term.writeln('\\r\\n[error] ' + msg + '\\r\\n');
-      });
-
-      socket.on('ssh_closed', function() {
-        setStatus('ssh session closed');
-        term.writeln('\\r\\n[session closed]\\r\\n');
-      });
-
+      
+      function connectHTTP() {
+        setStatus('connecting via HTTP...');
+        console.log('[terminal] Using HTTP-based terminal communication for universal proxy support');
+        
+        // Determine the correct base URL for API calls
+        const isProxy = window.location.pathname.includes('/proxy/');
+        const baseUrl = isProxy ? window.location.pathname.split('/admin/terminal')[0] : '';
+        const startUrl = baseUrl + '/admin/terminal/start';
+        
+        console.log('[terminal] HTTP start URL:', startUrl);
+        
+        // Start SSH session via HTTP
+        fetch(startUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            sessionId = data.sessionId;
+            setStatus('connected, starting ssh via HTTP...');
+            console.log('[terminal] HTTP session started:', sessionId);
+            startPolling();
+          } else {
+            setStatus('HTTP connection error: ' + data.error);
+          }
+        })
+        .catch(err => {
+          console.log('[terminal] HTTP connection failed:', err);
+          setStatus('HTTP connection failed: ' + err.message);
+        });
+      }
+      
+      function startPolling() {
+        // Determine base URL for polling
+        const isProxy = window.location.pathname.includes('/proxy/');
+        const baseUrl = isProxy ? window.location.pathname.split('/admin/terminal')[0] : '';
+        
+        // Poll for SSH output
+        pollInterval = setInterval(() => {
+          if (!sessionId) return;
+          
+          const pollUrl = baseUrl + `/admin/terminal/poll/${sessionId}`;
+          fetch(pollUrl)
+            .then(response => response.json())
+            .then(data => {
+              if (data.data) {
+                term.write(data.data);
+              }
+              if (data.closed) {
+                setStatus('SSH session closed');
+                stopPolling();
+              }
+            })
+            .catch(err => {
+              console.log('[terminal] Poll error:', err);
+              stopPolling();
+            });
+        }, 100);  // Poll every 100ms for responsive terminal
+      }
+      
+      function stopPolling() {
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
+        if (sessionId) {
+          const isProxy = window.location.pathname.includes('/proxy/');
+          const baseUrl = isProxy ? window.location.pathname.split('/admin/terminal')[0] : '';
+          const closeUrl = baseUrl + `/admin/terminal/close/${sessionId}`;
+          fetch(closeUrl, { method: 'POST' });
+          sessionId = null;
+        }
+      }
+      
+      // Handle terminal input for HTTP-based communication
       term.onData(function(data) {
-        if (socket) socket.emit('ssh_input', data);
+        if (sessionId) {
+          const isProxy = window.location.pathname.includes('/proxy/');
+          const baseUrl = isProxy ? window.location.pathname.split('/admin/terminal')[0] : '';
+          const inputUrl = baseUrl + `/admin/terminal/input/${sessionId}`;
+          fetch(inputUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: data })
+          });
+        }
       });
+      
+      // Use HTTP-based communication instead of Socket.IO
+      connectHTTP();
+      
+      // Clean up on page unload
+      window.addEventListener('beforeunload', stopPolling);
     }
 
     document.getElementById('connectBtn').addEventListener('click', () => connectSSH());
@@ -168,6 +242,61 @@ def terminal_page():
     return render_template_string(
         PAGE_HTML, host=DEFAULT_SSH_HOST, port=DEFAULT_SSH_PORT, ns_path=TERMINAL_NS, device_fqdn=device_fqdn
     )
+
+# HTTP-based terminal endpoints for proxy compatibility
+@terminal_bp.route("/admin/terminal/start", methods=["POST"])
+@gateway_auth_required
+def start_http_session():
+    try:
+        data = request.get_json()
+        host = str(data.get("host") or DEFAULT_SSH_HOST)
+        port = int(data.get("port") or DEFAULT_SSH_PORT)
+        username = str(data["username"]).strip()
+        password = str(data["password"])
+        
+        if not username or not password:
+            return jsonify({"success": False, "error": "Username and password are required"})
+        
+        session_id = str(uuid.uuid4())
+        session = HTTPSSHSession(session_id, host, port, username, password)
+        session.connect()
+        
+        _http_sessions[session_id] = session
+        threading.Thread(target=session.read_loop, daemon=True).start()
+        
+        return jsonify({"success": True, "sessionId": session_id})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+@terminal_bp.route("/admin/terminal/poll/<session_id>", methods=["GET"])
+@gateway_auth_required
+def poll_http_session(session_id):
+    session = _http_sessions.get(session_id)
+    if not session:
+        return jsonify({"error": "Session not found"})
+    
+    data = session.get_output()
+    return jsonify({"data": data, "closed": session.is_closed()})
+
+@terminal_bp.route("/admin/terminal/input/<session_id>", methods=["POST"])
+@gateway_auth_required
+def send_http_input(session_id):
+    session = _http_sessions.get(session_id)
+    if not session:
+        return jsonify({"error": "Session not found"})
+    
+    data = request.get_json().get("data", "")
+    session.write(data)
+    return jsonify({"success": True})
+
+@terminal_bp.route("/admin/terminal/close/<session_id>", methods=["POST"])
+@gateway_auth_required
+def close_http_session(session_id):
+    session = _http_sessions.pop(session_id, None)
+    if session:
+        session.close()
+    return jsonify({"success": True})
 
 class SSHSession:
     def __init__(self, sid, host, port, username, password, sio):
@@ -241,6 +370,81 @@ class SSHSession:
                 pass
 
 _sessions_by_sid = {}
+_http_sessions = {}  # For HTTP-based sessions
+
+class HTTPSSHSession:
+    def __init__(self, session_id, host, port, username, password):
+        self.session_id = session_id
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.client = None
+        self.channel = None
+        self.output_buffer = []
+        self._closed = False
+        self._lock = threading.Lock()
+        self.last_activity = time.time()
+        
+    def connect(self):
+        self.client = paramiko.SSHClient()
+        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        self.client.connect(
+            hostname=self.host, 
+            port=self.port, 
+            username=self.username, 
+            password=self.password
+        )
+        self.channel = self.client.invoke_shell(term="xterm", width=120, height=30)
+        self.channel.settimeout(0.0)
+        
+    def write(self, data):
+        with self._lock:
+            if self.channel and not self._closed:
+                self.channel.send(data)
+                self.last_activity = time.time()
+                
+    def read_loop(self):
+        try:
+            while not self._closed:
+                if self.channel and self.channel.recv_ready():
+                    chunk = self.channel.recv(4096)
+                    if not chunk:
+                        break
+                    with self._lock:
+                        self.output_buffer.append(chunk.decode("utf-8", errors="ignore"))
+                    self.last_activity = time.time()
+                else:
+                    if time.time() - self.last_activity > IDLE_TIMEOUT:
+                        break
+                    time.sleep(0.03)
+        finally:
+            self.close()
+            
+    def get_output(self):
+        with self._lock:
+            if self.output_buffer:
+                output = ''.join(self.output_buffer)
+                self.output_buffer.clear()
+                return output
+            return ""
+    
+    def is_closed(self):
+        return self._closed
+        
+    def close(self):
+        with self._lock:
+            self._closed = True
+            try:
+                if self.channel:
+                    self.channel.close()
+            except Exception:
+                pass
+            try:
+                if self.client:
+                    self.client.close()
+            except Exception:
+                pass
 
 class TerminalNamespace(Namespace):
     def __init__(self, namespace, sio):
