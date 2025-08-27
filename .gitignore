@@ -225,4 +225,14 @@ data/
 
 # Generated files
 version.txt
-build_info.json
+build_info.json# Backup files and temporary directories
+keuka.pybak.*/
+*.bak.*
+.keuka_commit
+keuka/.keuka_commit
+
+# Static assets directory (if not needed in git)
+keuka/static/
+
+# Contact file
+keuka/core/contact.txt
