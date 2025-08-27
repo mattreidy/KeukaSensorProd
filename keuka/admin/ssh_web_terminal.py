@@ -204,18 +204,38 @@ PAGE_HTML = r"""
         }
       }
       
-      // Handle terminal input for HTTP-based communication
+      // Handle terminal input for HTTP-based communication with debouncing
+      let inputQueue = [];
+      let inputTimeout = null;
+      
       term.onData(function(data) {
-        if (sessionId) {
-          const isProxy = window.location.pathname.includes('/proxy/');
-          const baseUrl = isProxy ? window.location.pathname.split('/admin/terminal')[0] : '';
-          const inputUrl = baseUrl + `/admin/terminal/input/${sessionId}`;
-          fetch(inputUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data: data })
-          });
+        if (!sessionId) return;
+        
+        // Add input to queue and debounce to prevent duplicates
+        inputQueue.push(data);
+        
+        if (inputTimeout) {
+          clearTimeout(inputTimeout);
         }
+        
+        inputTimeout = setTimeout(() => {
+          if (inputQueue.length > 0) {
+            const combinedInput = inputQueue.join('');
+            inputQueue = [];
+            
+            const isProxy = window.location.pathname.includes('/proxy/');
+            const baseUrl = isProxy ? window.location.pathname.split('/admin/terminal')[0] : '';
+            const inputUrl = baseUrl + `/admin/terminal/input/${sessionId}`;
+            
+            fetch(inputUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ data: combinedInput })
+            }).catch(err => {
+              console.log('[terminal] Input error:', err);
+            });
+          }
+        }, 10);  // 10ms debounce to batch rapid keystrokes
       });
       
       // Use HTTP-based communication instead of Socket.IO
@@ -393,7 +413,8 @@ class HTTPSSHSession:
             hostname=self.host, 
             port=self.port, 
             username=self.username, 
-            password=self.password
+            password=self.password,
+            timeout=10
         )
         self.channel = self.client.invoke_shell(term="xterm", width=120, height=30)
         self.channel.settimeout(0.0)
@@ -401,7 +422,15 @@ class HTTPSSHSession:
     def write(self, data):
         with self._lock:
             if self.channel and not self._closed:
+                # Add small delay to prevent input flooding
+                current_time = time.time()
+                if hasattr(self, '_last_write_time'):
+                    time_since_last = current_time - self._last_write_time
+                    if time_since_last < 0.005:  # 5ms minimum between writes
+                        time.sleep(0.005 - time_since_last)
+                
                 self.channel.send(data)
+                self._last_write_time = time.time()
                 self.last_activity = time.time()
                 
     def read_loop(self):
