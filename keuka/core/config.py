@@ -42,6 +42,29 @@ RSSI_CRIT_DBM = int(os.environ.get("KS_RSSI_CRIT_DBM", "-80"))
 CPU_TEMP_WARN_C = float(os.environ.get("KS_CPU_WARN_C", "75"))
 CPU_TEMP_CRIT_C = float(os.environ.get("KS_CPU_CRIT_C", "85"))
 
+# Tunnel configuration
+SENSOR_NAME = os.environ.get('SENSOR_NAME')
+KEUKA_SERVER_URL = os.environ.get('KEUKA_SERVER_URL', 'https://keuka.org')
+TUNNEL_ENABLED = os.environ.get('TUNNEL_ENABLED', 'true').lower() == 'true'
+
+# Try to read sensor name from device.conf if not in environment
+if not SENSOR_NAME:
+    try:
+        device_conf_path = Path(__file__).resolve().parent.parent.parent / "configuration" / "services" / "device.conf"
+        if device_conf_path.exists():
+            with open(device_conf_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('device_name='):
+                        SENSOR_NAME = line.split('=', 1)[1]
+                        break
+    except Exception:
+        pass
+
+# Fallback sensor name
+if not SENSOR_NAME:
+    SENSOR_NAME = "keukasensor1"
+
 # App
 VERSION = "unused"
 
