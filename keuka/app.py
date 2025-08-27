@@ -7,8 +7,10 @@
 # - Keeps configuration centralized in config.py.
 # -----------------------------------------------------------------------------
 
+import atexit
 from flask import Flask
 from .config import VERSION  # example: can be shown in templates if needed
+from .tunnel_client import start_tunnel, stop_tunnel
 
 # Import blueprints (using relative imports)
 from .routes_root import root_bp
@@ -41,6 +43,14 @@ def create_app() -> Flask:
     register_terminal_blueprint(app)   # serves GET /admin/terminal
     register_terminal_namespace()      # Socket.IO ns /admin/terminal
 
+    # Start tunnel client
+    if start_tunnel():
+        print("Tunnel client started successfully")
+        # Register cleanup on app shutdown
+        atexit.register(stop_tunnel)
+    else:
+        print("Tunnel client already running")
+
     # You can stash global config if desired
     app.config["VERSION"] = VERSION
     return app
@@ -48,5 +58,8 @@ def create_app() -> Flask:
 # Allow `python app.py` to run directly (handy during development)
 if __name__ == "__main__":
     app = create_app()
-    # IMPORTANT: run via socketio so WebSockets work in dev
-    socketio.run(app, host="0.0.0.0", port=5000, debug=False)
+    try:
+        # IMPORTANT: run via socketio so WebSockets work in dev
+        socketio.run(app, host="0.0.0.0", port=5000, debug=False)
+    finally:
+        stop_tunnel()
