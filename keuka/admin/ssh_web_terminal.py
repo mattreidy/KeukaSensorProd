@@ -56,9 +56,9 @@ PAGE_HTML = r"""
   <title>Keuka SSH Terminal</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- xterm.js (local) -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/xterm.min.css') }}">
-  <script src="{{ url_for('static', filename='js/xterm.min.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/xterm-addon-fit.min.js') }}"></script>
+  <link rel="stylesheet" href="../static/css/xterm.min.css">
+  <script src="../static/js/xterm.min.js"></script>
+  <script src="../static/js/xterm-addon-fit.min.js"></script>
   <style>
     body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #111; color: #eee; }
     .wrap { max-width: 1000px; margin: 0 auto; padding: 16px; }
@@ -154,12 +154,12 @@ PAGE_HTML = r"""
     document.getElementById('connectBtn').addEventListener('click', () => connectSSH());
   </script>
   <!-- Socket.IO client (local) -->
-  <script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
+  <script src="../static/js/socket.io.min.js"></script>
 </body>
 </html>
 """
 
-terminal_bp = Blueprint("terminal_bp", __name__)
+terminal_bp = Blueprint("terminal_bp", __name__, static_folder="../static", static_url_path="/admin/static")
 
 @terminal_bp.route(TERMINAL_ROUTE, methods=["GET"])
 @gateway_auth_required
