@@ -224,7 +224,8 @@ _WIFI_HTML_TMPL = """
     }
 
     async function refreshStatus() {
-      const r = await fetch('/api/wifi/status', {cache:'no-store'});
+      const url = window.getProxyAwareUrl ? window.getProxyAwareUrl('/api/wifi/status') : '/api/wifi/status';
+      const r = await fetch(url, {cache:'no-store'});
       const j = await r.json();
       q('#status').textContent = JSON.stringify(j, null, 2);
       q('#curIp').textContent = "STA ip: " + (j.ip['%%STA%%'] || "(none)") + "   |   GW: " + (j.gateway_sta || "(none)");
@@ -237,7 +238,8 @@ _WIFI_HTML_TMPL = """
     q('#btnScan').onclick = async () => {
       q('#scanNote').textContent = "Scanning…";
       try {
-        const r = await fetch('/api/wifi/scan', {cache:'no-store'});
+        const url = window.getProxyAwareUrl ? window.getProxyAwareUrl('/api/wifi/scan') : '/api/wifi/scan';
+        const r = await fetch(url, {cache:'no-store'});
         const j = await r.json();
         renderScan(j.networks||[]);
         q('#scanNote').textContent = (j.networks && j.networks.length) ? "Done." : "No networks found.";
@@ -255,7 +257,8 @@ _WIFI_HTML_TMPL = """
       q('#connectNote').textContent = "Connecting…";
       const payload = { ssid: q('#ssid').value.trim(), psk: q('#psk').value };
       try {
-        const r = await fetch('/api/wifi/connect', {
+        const url = window.getProxyAwareUrl ? window.getProxyAwareUrl('/api/wifi/connect') : '/api/wifi/connect';
+        const r = await fetch(url, {
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify(payload)
         });
@@ -278,7 +281,8 @@ _WIFI_HTML_TMPL = """
         dns_csv: q('#dns_csv').value.trim()
       };
       try {
-        const r = await fetch('/api/wifi/ip', {
+        const url = window.getProxyAwareUrl ? window.getProxyAwareUrl('/api/wifi/ip') : '/api/wifi/ip';
+        const r = await fetch(url, {
           method: 'POST', headers: { 'Content-Type': 'application/json'},
           body: JSON.stringify(payload)
         });
@@ -296,7 +300,8 @@ _WIFI_HTML_TMPL = """
     // --- Device Name functions ---
     async function device_name_load() {
       try {
-        const r = await fetch('/api/device/name', { cache: 'no-store' });
+        const url = window.getProxyAwareUrl ? window.getProxyAwareUrl('/api/device/name') : '/api/device/name';
+        const r = await fetch(url, { cache: 'no-store' });
         const j = await r.json();
         if (j.ok && j.device_name) {
           document.getElementById('device_name').value = j.device_name;
@@ -315,7 +320,8 @@ _WIFI_HTML_TMPL = """
       
       document.getElementById('device_name_status').textContent = 'Saving...';
       try {
-        const r = await fetch('/api/device/name', {
+        const url = window.getProxyAwareUrl ? window.getProxyAwareUrl('/api/device/name') : '/api/device/name';
+        const r = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ device_name: name })
@@ -340,7 +346,8 @@ _WIFI_HTML_TMPL = """
     refreshStatus();
     device_name_load();
     (function wan_loop(){
-      fetch('/api/wanip',{cache:'no-store'}).then(r=>r.json()).then(j=>{
+      const url = window.getProxyAwareUrl ? window.getProxyAwareUrl('/api/wanip') : '/api/wanip';
+      fetch(url,{cache:'no-store'}).then(r=>r.json()).then(j=>{
         document.getElementById('wan_ip').textContent = j.ip || '—';
         setTimeField('wan_changed', j.changed_at || null);
       }).catch(()=>{
