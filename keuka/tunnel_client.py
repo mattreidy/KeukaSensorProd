@@ -129,7 +129,14 @@ class TunnelClient:
                                     if data.get('type') == 'connected':
                                         logger.info(f"Tunnel established for {data.get('sensorName')}")
                                     elif data.get('type') == 'http_request':
-                                        self._handle_http_request(data)
+                                        # Handle request in a separate thread to avoid blocking SSE stream
+                                        request_thread = threading.Thread(
+                                            target=self._handle_http_request,
+                                            args=(data,),
+                                            daemon=True,
+                                            name=f"tunnel-req-{data.get('requestId', 'unknown')}"
+                                        )
+                                        request_thread.start()
                                     elif data.get('type') == 'ping':
                                         logger.debug("Received server ping")
                                 except json.JSONDecodeError as e:
@@ -162,8 +169,9 @@ class TunnelClient:
 
     def _handle_http_request(self, request_data):
         """Process an HTTP request from the tunnel and send response back"""
+        request_id = request_data.get('requestId', 'unknown')
+        
         try:
-            request_id = request_data['requestId']
             method = request_data['method']
             path = request_data['path']
             headers = request_data.get('headers', {})
@@ -175,12 +183,12 @@ class TunnelClient:
             # Forward request to local Flask server
             local_url = urljoin(self.local_url, path)
             
-            # Prepare request parameters
+            # Prepare request parameters with more robust timeout
             request_kwargs = {
                 'method': method,
                 'url': local_url,
                 'params': query,
-                'timeout': 25,  # Leave buffer for 30s tunnel timeout
+                'timeout': (10, 20),  # (connect_timeout, read_timeout) - more conservative
             }
             
             # Handle request body
@@ -205,19 +213,33 @@ class TunnelClient:
             if forward_headers:
                 request_kwargs['headers'] = forward_headers
             
-            # Make request to local Flask server
-            response = requests.request(**request_kwargs)
+            # Make request to local Flask server with better error handling
+            try:
+                response = requests.request(**request_kwargs)
+                logger.debug(f"Local request successful: {response.status_code} (ID: {request_id})")
+                
+                # Send response back through tunnel
+                self._send_response(request_id, response)
+                
+            except requests.Timeout as e:
+                logger.warning(f"Local request timeout for {method} {path} (ID: {request_id}): {e}")
+                self._send_error_response(request_id, "Request timeout - the sensor is busy", status_code=503)
+                
+            except requests.ConnectionError as e:
+                logger.error(f"Local connection error for {method} {path} (ID: {request_id}): {e}")
+                self._send_error_response(request_id, "Service temporarily unavailable", status_code=503)
+                
+            except requests.RequestException as e:
+                logger.error(f"Local request error for {method} {path} (ID: {request_id}): {e}")
+                self._send_error_response(request_id, "Request processing failed", status_code=502)
             
-            # Send response back through tunnel
-            self._send_response(request_id, response)
+        except KeyError as e:
+            logger.error(f"Invalid request data format (ID: {request_id}): missing {e}")
+            self._send_error_response(request_id, "Invalid request format", status_code=400)
             
         except Exception as e:
-            logger.error(f"Error handling HTTP request {request_data.get('requestId', 'unknown')}: {e}")
-            # Send error response
-            try:
-                self._send_error_response(request_data.get('requestId'), str(e))
-            except:
-                pass
+            logger.error(f"Unexpected error handling HTTP request (ID: {request_id}): {e}")
+            self._send_error_response(request_id, "Internal tunnel error", status_code=500)
 
     def _send_response(self, request_id, response):
         """Send HTTP response back through the tunnel"""
@@ -229,34 +251,50 @@ class TunnelClient:
                 if key.lower() not in ['connection', 'transfer-encoding', 'content-encoding']:
                     response_headers[key] = value
             
-            # Send response back to keuka.org
+            # Limit response size to prevent tunnel overload
+            content = response.content
+            max_content_size = 10 * 1024 * 1024  # 10MB limit
+            if len(content) > max_content_size:
+                logger.warning(f"Response too large ({len(content)} bytes), truncating (ID: {request_id})")
+                content = content[:max_content_size]
+                response_headers['X-Truncated'] = 'true'
+            
+            # Send response back to keuka.org with timeout
             tunnel_response = requests.post(
                 self.response_url,
-                data=response.content,
+                data=content,
                 headers={
                     'X-Request-ID': request_id,
                     'X-Response-Status': str(response.status_code),
                     'X-Response-Headers': json.dumps(response_headers),
                     'Content-Type': 'application/octet-stream'
                 },
-                timeout=30
+                timeout=25  # Reduced timeout for better reliability
             )
             tunnel_response.raise_for_status()
             
-            logger.info(f"Response sent for request {request_id}: {response.status_code}")
+            logger.info(f"Response sent for request {request_id}: {response.status_code} ({len(content)} bytes)")
+            
+        except requests.Timeout:
+            logger.error(f"Timeout sending response for request {request_id}")
+            # Don't retry - the server-side timeout has probably occurred
+            
+        except requests.RequestException as e:
+            logger.error(f"Network error sending response for request {request_id}: {e}")
             
         except Exception as e:
-            logger.error(f"Failed to send response for request {request_id}: {e}")
+            logger.error(f"Unexpected error sending response for request {request_id}: {e}")
 
-    def _send_error_response(self, request_id, error_message):
+    def _send_error_response(self, request_id, error_message, status_code=500):
         """Send error response back through the tunnel"""
         try:
             error_html = f"""
             <html>
                 <body>
-                    <h1>Sensor Error</h1>
+                    <h1>Sensor Error ({status_code})</h1>
                     <p>The sensor encountered an error processing your request:</p>
                     <p><strong>{error_message}</strong></p>
+                    <p><small>Request ID: {request_id}</small></p>
                 </body>
             </html>
             """
@@ -266,14 +304,19 @@ class TunnelClient:
                 data=error_html.encode('utf-8'),
                 headers={
                     'X-Request-ID': request_id,
-                    'X-Response-Status': '500',
+                    'X-Response-Status': str(status_code),
                     'X-Response-Headers': json.dumps({'Content-Type': 'text/html'}),
                     'Content-Type': 'application/octet-stream'
                 },
-                timeout=30
+                timeout=15  # Shorter timeout for error responses
             )
             tunnel_response.raise_for_status()
+            logger.debug(f"Error response sent for request {request_id}: {status_code}")
             
+        except requests.Timeout:
+            logger.error(f"Timeout sending error response for request {request_id}")
+        except requests.RequestException as e:
+            logger.error(f"Network error sending error response for request {request_id}: {e}")
         except Exception as e:
             logger.error(f"Failed to send error response for request {request_id}: {e}")
 

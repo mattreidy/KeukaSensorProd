@@ -68,10 +68,24 @@ def contact_set(info: dict) -> None:
         "notes":   _s(info.get("notes"),   5000),
     }
 
-    CONTACT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CONTACT_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(CONTACT_FILE)  # atomic on POSIX
+    try:
+        CONTACT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CONTACT_FILE.with_suffix(".tmp")
+        
+        # Write with explicit flush and sync to prevent hanging
+        with tmp.open('w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.flush()  # Ensure data is written to OS buffers
+            import os
+            os.fsync(f.fileno())  # Force write to disk
+        
+        tmp.replace(CONTACT_FILE)  # atomic on POSIX
+        
+    except OSError as e:
+        # Log but don't fail completely - contact updates shouldn't kill the app
+        import logging
+        logging.error(f"Failed to save contact info to {CONTACT_FILE}: {e}")
+        raise  # Re-raise so the API can return appropriate error
 
 def hostapd_info(conf_path: str = "/etc/hostapd/hostapd.conf") -> dict:
     """Best-effort parse of hostapd.conf so we can show AP SSID/channel."""
