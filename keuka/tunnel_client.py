@@ -215,11 +215,24 @@ class TunnelClient:
             
             # Make request to local Flask server with better error handling
             try:
-                response = requests.request(**request_kwargs)
-                logger.debug(f"Local request successful: {response.status_code} (ID: {request_id})")
+                # Check if this looks like an SSE request
+                is_sse_request = (
+                    path.endswith('.sse') or 
+                    path.endswith('/sse') or
+                    forward_headers.get('Accept', '').find('text/event-stream') != -1
+                )
                 
-                # Send response back through tunnel
-                self._send_response(request_id, response)
+                if is_sse_request:
+                    # Handle SSE streaming requests specially
+                    logger.info(f"Handling SSE stream for {method} {path} (ID: {request_id})")
+                    self._handle_sse_request(request_id, request_kwargs)
+                else:
+                    # Handle normal requests
+                    response = requests.request(**request_kwargs)
+                    logger.debug(f"Local request successful: {response.status_code} (ID: {request_id})")
+                    
+                    # Send response back through tunnel
+                    self._send_response(request_id, response)
                 
             except requests.Timeout as e:
                 logger.warning(f"Local request timeout for {method} {path} (ID: {request_id}): {e}")
@@ -240,6 +253,84 @@ class TunnelClient:
         except Exception as e:
             logger.error(f"Unexpected error handling HTTP request (ID: {request_id}): {e}")
             self._send_error_response(request_id, "Internal tunnel error", status_code=500)
+
+    def _handle_sse_request(self, request_id, request_kwargs):
+        """Handle Server-Sent Events streaming requests"""
+        try:
+            # For SSE, collect the first event and send it, then let the client reconnect
+            # This is simpler and more reliable than trying to stream indefinitely through the tunnel
+            request_kwargs['stream'] = True
+            request_kwargs['timeout'] = (10, 30)  # 30 second read timeout to get first event
+            
+            logger.info(f"Collecting initial SSE event for {request_id}")
+            
+            response = requests.request(**request_kwargs)
+            
+            if response.status_code != 200:
+                logger.warning(f"SSE request failed with status {response.status_code} (ID: {request_id})")
+                self._send_error_response(request_id, f"SSE endpoint returned {response.status_code}", response.status_code)
+                return
+            
+            # Collect the first complete SSE event (up to first double newline)
+            sse_content = ""
+            line_buffer = ""
+            event_complete = False
+            
+            try:
+                # Read until we get a complete SSE event
+                for chunk in response.iter_content(chunk_size=512, decode_unicode=True):
+                    if not chunk:
+                        continue
+                        
+                    line_buffer += chunk
+                    sse_content += chunk
+                    
+                    # Check if we have a complete SSE event (ends with \n\n)
+                    if '\n\n' in line_buffer:
+                        event_complete = True
+                        break
+                    
+                    # Safety limit - don't let SSE content get too large
+                    if len(sse_content) > 50000:  # 50KB limit
+                        logger.warning(f"SSE content too large for request {request_id}, truncating")
+                        break
+                
+                # Close the response stream
+                response.close()
+                
+                if event_complete or sse_content.strip():
+                    # Send the collected SSE content as a response
+                    response_headers = {
+                        'Content-Type': 'text/event-stream',
+                        'Cache-Control': 'no-cache',
+                        'Connection': 'close',  # Force client to reconnect for next update
+                    }
+                    
+                    tunnel_response = requests.post(
+                        self.response_url,
+                        data=sse_content.encode('utf-8'),
+                        headers={
+                            'X-Request-ID': request_id,
+                            'X-Response-Status': '200',
+                            'X-Response-Headers': json.dumps(response_headers),
+                            'Content-Type': 'application/octet-stream'
+                        },
+                        timeout=15
+                    )
+                    tunnel_response.raise_for_status()
+                    
+                    logger.info(f"SSE event sent for request {request_id} ({len(sse_content)} bytes)")
+                else:
+                    logger.warning(f"No SSE content received for request {request_id}")
+                    self._send_error_response(request_id, "No SSE data received", status_code=204)
+                    
+            except requests.RequestException as e:
+                logger.error(f"SSE stream error for request {request_id}: {e}")
+                self._send_error_response(request_id, "SSE connection failed", status_code=502)
+                
+        except Exception as e:
+            logger.error(f"Error handling SSE request {request_id}: {e}")
+            self._send_error_response(request_id, "SSE streaming failed", status_code=500)
 
     def _send_response(self, request_id, response):
         """Send HTTP response back through the tunnel"""
