@@ -89,15 +89,37 @@ def hostapd_info(conf_path: str = "/etc/hostapd/hostapd.conf") -> dict:
     }
 
 # -------- Shared payload builder --------
-def build_health_payload() -> dict:
-    # Sensor readings (gracefully handle missing hardware)
-    tF = read_temp_fahrenheit()
-    dIn = median_distance_inches()
-    turbidity = None  # Placeholder for future turbidity sensor (not yet implemented)
+# Simple cache to avoid re-reading sensors too frequently
+_health_cache = {"data": None, "timestamp": 0, "fast_mode": None}
+_cache_ttl_seconds = 1.5  # Cache valid for 1.5 seconds
 
-    # GPS (lat, lon in degrees; alt in meters) -> convert elevation to feet
-    lat, lon, alt_m = read_gps_lat_lon_elev()
-    elev_ft = alt_m * 3.28084 if not (alt_m != alt_m) else float('nan')  # NaN check
+def build_health_payload(fast_mode: bool = False) -> dict:
+    # Check cache first
+    current_time = time.time()
+    if (_health_cache["data"] is not None and 
+        current_time - _health_cache["timestamp"] < _cache_ttl_seconds and
+        _health_cache["fast_mode"] == fast_mode):
+        return _health_cache["data"].copy()  # Return cached copy
+    # Sensor readings (gracefully handle missing hardware)
+    # Use optimized parameters for faster loading if requested
+    if fast_mode:
+        # Optimized for web page loading - reduced timeouts and samples
+        tF = read_temp_fahrenheit()  # Already has reasonable retry logic
+        dIn = median_distance_inches(samples=5)  # Reduce from 11 to 5 samples
+        turbidity = None  # Placeholder for future turbidity sensor (not yet implemented)
+
+        # GPS with reduced timeout for web requests
+        lat, lon, alt_m = read_gps_lat_lon_elev(duration_s=0.5)  # Reduce from 2.0s to 0.5s
+        elev_ft = alt_m * 3.28084 if not (alt_m != alt_m) else float('nan')  # NaN check
+    else:
+        # Normal mode with full timeouts for background updates
+        tF = read_temp_fahrenheit()
+        dIn = median_distance_inches()
+        turbidity = None  # Placeholder for future turbidity sensor (not yet implemented)
+
+        # GPS (lat, lon in degrees; alt in meters) -> convert elevation to feet
+        lat, lon, alt_m = read_gps_lat_lon_elev()
+        elev_ft = alt_m * 3.28084 if not (alt_m != alt_m) else float('nan')  # NaN check
 
     # Wi-Fi
     st = wifi_status() or {}               # STA link info (on WLAN_STA_IFACE)
@@ -134,7 +156,7 @@ def build_health_payload() -> dict:
         if val:
             ip_map[iface] = val
 
-    return {
+    result = {
         "time_utc": utcnow_str(),
         "tempF": None if (tF != tF) else round(tF, 2),
         "distanceInches": None if (dIn != dIn) else round(dIn, 2),
@@ -177,11 +199,19 @@ def build_health_payload() -> dict:
         },
         "contact": contact_get(),
     }
+    
+    # Update cache
+    _health_cache["data"] = result.copy()
+    _health_cache["timestamp"] = current_time
+    _health_cache["fast_mode"] = fast_mode
+    
+    return result
 
 # -------- HTML dashboard --------
 @health_bp.route("/health")
 def health():
-    info = build_health_payload()
+    # Use fast mode for initial page load to reduce loading time
+    info = build_health_payload(fast_mode=True)
     extra_head = f"""
     <script id="seed" type="application/json">{json.dumps(info)}</script>
     <!-- Leaflet map (client-side; no Python deps) -->
