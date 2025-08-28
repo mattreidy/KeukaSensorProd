@@ -344,7 +344,12 @@ _WIFI_HTML_TMPL = """
 
     // initial
     refreshStatus();
-    device_name_load();
+    
+    // Wait for proxy-aware system to initialize before loading device name
+    setTimeout(() => {
+      device_name_load();
+    }, 100);
+    
     (function wan_loop(){
       const url = window.getProxyAwareUrl ? window.getProxyAwareUrl('/api/wanip') : '/api/wanip';
       fetch(url,{cache:'no-store'}).then(r=>r.json()).then(j=>{
