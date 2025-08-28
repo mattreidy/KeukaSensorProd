@@ -6,15 +6,19 @@
 #   /snapshot - single JPEG frame for use as a lightweight thumbnail
 # -----------------------------------------------------------------------------
 
+from __future__ import annotations
 import time
-from flask import Blueprint, Response, abort
+from typing import Response as ResponseType, Generator
+from flask import Blueprint, Response
 from ...camera import camera  # backend-agnostic; produces JPEG bytes
 from ...ui import render_page
+from ..common import api_route, ApiError
 
 webcam_bp = Blueprint("webcam", __name__)
 
 @webcam_bp.route("/webcam")
-def webcam_page():
+@api_route
+def webcam_page() -> str:
     body = """
       <h1>Webcam</h1>
       <div class="card">
@@ -60,7 +64,8 @@ def webcam_page():
     return render_page("Keuka Sensor – Webcam", body)
 
 @webcam_bp.route("/stream")
-def stream_mjpeg():
+@api_route
+def stream_mjpeg() -> ResponseType:
     # Ensure background capture thread is running
     if not camera.running:
         try:
@@ -71,9 +76,9 @@ def stream_mjpeg():
     # Quick check for camera availability using non-blocking buffer
     initial_frame = camera.get_jpeg_async(max_age_seconds=2.0)
     if initial_frame is None and not camera.available:
-        abort(503, "No camera frames available.")
+        raise ApiError("No camera frames available", 503)
 
-    def gen():
+    def gen() -> Generator[bytes, None, None]:
         boundary = b"frame"
         last_frame = None
         frame_repeat_count = 0
@@ -114,7 +119,8 @@ def stream_mjpeg():
     return Response(gen(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 @webcam_bp.route("/snapshot")
-def snapshot_jpeg():
+@api_route
+def snapshot_jpeg() -> ResponseType:
     if not camera.running:
         try:
             camera.start()
@@ -134,7 +140,7 @@ def snapshot_jpeg():
             time.sleep(0.02)  # Shorter sleep
 
     if not frm:
-        abort(503, "No frame available")
+        raise ApiError("No frame available", 503)
 
     resp = Response(frm, mimetype="image/jpeg")
     # Cache-busting headers
@@ -144,7 +150,8 @@ def snapshot_jpeg():
     return resp
 
 @webcam_bp.route("/camera/stats")
-def camera_stats():
+@api_route
+def camera_stats() -> dict[str, any]:
     """Get camera buffer statistics for monitoring and debugging"""
     stats = camera.get_buffer_stats()
     return {"ok": True, "stats": stats}

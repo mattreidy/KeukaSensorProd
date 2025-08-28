@@ -9,11 +9,12 @@
 #  - FQDN determination
 # -----------------------------------------------------------------------------
 
+from __future__ import annotations
 import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, List, Any
 
 from .config import ADMIN_USER, ADMIN_PASS
 
@@ -25,7 +26,7 @@ def utcnow_str() -> str:
     """UTC time string (used by health payload, converted to browser local)."""
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
-def basic_auth_ok(req) -> bool:
+def basic_auth_ok(req: Any) -> bool:
     """
     Validate HTTP Basic Auth credentials against env-configured admin user/pass.
     Call as: if not basic_auth_ok(request): return 401...
@@ -33,7 +34,7 @@ def basic_auth_ok(req) -> bool:
     a = req.authorization
     return bool(a and a.username == ADMIN_USER and a.password == ADMIN_PASS)
 
-def sh(cmd: list[str]) -> Tuple[int, str]:
+def sh(cmd: List[str]) -> Tuple[int, str]:
     """
     Run a shell command and return (exit_code, output).
     Captures both stdout and stderr into text.

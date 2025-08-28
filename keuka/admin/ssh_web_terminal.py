@@ -20,10 +20,8 @@ import json
 from functools import wraps
 
 from flask import Blueprint, request, render_template_string, jsonify
-from flask_socketio import Namespace, emit
 import paramiko
 
-from ..socketio_ext import socketio
 from ..core.utils import get_system_fqdn
 
 DEFAULT_SSH_HOST = os.environ.get("KS_TERM_SSH_HOST", "127.0.0.1")
@@ -318,78 +316,8 @@ def close_http_session(session_id):
         session.close()
     return jsonify({"success": True})
 
-class SSHSession:
-    def __init__(self, sid, host, port, username, password, sio):
-        self.sid = sid
-        self.host = host
-        self.port = port
-        self.username = username
-        self.password = password
-        self.client = None
-        self.channel = None
-        self.last_activity = time.time()
-        self._closed = False
-        self._lock = threading.Lock()
-        self.sio = sio
-
-    def open(self):
-        print(f"[ssh] open sid={self.sid} {self.username}@{self.host}:{self.port}")
-        self.client = paramiko.SSHClient()
-        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self.client.connect(
-            self.host,
-            port=self.port,
-            username=self.username,
-            password=self.password,
-            look_for_keys=False,
-            allow_agent=False,
-            timeout=10,
-            banner_timeout=10,
-            auth_timeout=10,
-        )
-        self.channel = self.client.invoke_shell(term="xterm", width=120, height=30)
-        self.channel.settimeout(0.0)
-
-    def write(self, data: str):
-        with self._lock:
-            if self.channel and not self._closed:
-                self.channel.send(data)
-                self.last_activity = time.time()
-
-    def read_loop(self):
-        try:
-            while not self._closed:
-                if self.channel and self.channel.recv_ready():
-                    chunk = self.channel.recv(4096)
-                    if not chunk:
-                        break
-                    self.sio.emit("ssh_data", chunk.decode("utf-8", errors="ignore"),
-                                  room=self.sid, namespace=TERMINAL_NS)
-                    self.last_activity = time.time()
-                else:
-                    if time.time() - self.last_activity > IDLE_TIMEOUT:
-                        break
-                    time.sleep(0.03)
-        finally:
-            self.close()
-            self.sio.emit("ssh_closed", room=self.sid, namespace=TERMINAL_NS)
-            print(f"[ssh] closed sid={self.sid}")
-
-    def close(self):
-        with self._lock:
-            self._closed = True
-            try:
-                if self.channel:
-                    self.channel.close()
-            except Exception:
-                pass
-            try:
-                if self.client:
-                    self.client.close()
-            except Exception:
-                pass
-
-_sessions_by_sid = {}
+# Legacy SocketIO-based SSH session class removed - using HTTP-based communication
+_sessions_by_sid = {}  # Kept for compatibility
 _http_sessions = {}  # For HTTP-based sessions
 
 class HTTPSSHSession:
@@ -475,69 +403,11 @@ class HTTPSSHSession:
             except Exception:
                 pass
 
-class TerminalNamespace(Namespace):
-    def __init__(self, namespace, sio):
-        super().__init__(namespace)
-        self.sio = sio
-
-    def on_connect(self):
-        print(f"[ns] client connected to {TERMINAL_NS}")
-
-    def on_ssh_start(self, payload):
-        from flask import request
-        sid = request.sid
-        print(f"[ns] ssh_start from sid={sid} payload_keys={list(payload.keys())}")
-        try:
-            host = str(payload.get("host") or DEFAULT_SSH_HOST)
-            port = int(payload.get("port") or DEFAULT_SSH_PORT)
-            username = str(payload["username"]).strip()
-            password = str(payload["password"])
-            if not username or not password:
-                emit("ssh_error", "Username and password are required.")
-                return
-        except Exception as e:
-            emit("ssh_error", f"Invalid parameters: {e}")
-            return
-
-        old = _sessions_by_sid.pop(sid, None)
-        if old:
-            try: old.close()
-            except Exception: pass
-
-        sess = SSHSession(sid, host, port, username, password, self.sio)
-        try:
-            sess.open()
-        except Exception as e:
-            emit("ssh_error", f"SSH connect failed: {e}")
-            return
-
-        _sessions_by_sid[sid] = sess
-        t = threading.Thread(target=sess.read_loop, daemon=True)
-        t.start()
-
-    def on_ssh_input(self, data):
-        from flask import request
-        sid = request.sid
-        sess = _sessions_by_sid.get(sid)
-        if not sess:
-            emit("ssh_error", "No active session.")
-            return
-        try:
-            sess.write(data)
-        except Exception as e:
-            emit("ssh_error", f"Write failed: {e}")
-
-    def on_disconnect(self):
-        from flask import request
-        sid = request.sid
-        print(f"[ns] client disconnected sid={sid}")
-        sess = _sessions_by_sid.pop(sid, None)
-        if sess:
-            try: sess.close()
-            except Exception: pass
+# Legacy SocketIO namespace class removed - using HTTP-based communication
 
 def register_terminal_blueprint(app):
     app.register_blueprint(terminal_bp)
 
 def register_terminal_namespace():
-    socketio.on_namespace(TerminalNamespace(TERMINAL_NS, socketio))
+    # Socket.IO namespace registration removed - using HTTP-based communication
+    pass

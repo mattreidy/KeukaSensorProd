@@ -6,12 +6,15 @@
 #   /health.sse  - Server-Sent Events stream that pushes a fresh payload ~5s
 # -----------------------------------------------------------------------------
 
+from __future__ import annotations
 import json
 import time
 import re
 from pathlib import Path
 from datetime import datetime, timedelta
+from typing import Dict, Any, Union, Tuple, Generator
 from flask import Blueprint, Response, request
+from ..common import api_route, ApiError, validate_json_request
 
 from ...ui import render_page
 from ...core.utils import utcnow_str, read_text
@@ -51,7 +54,7 @@ def contact_get() -> dict:
             out[k] = ""
     return out
 
-def contact_set(info: dict) -> None:
+def contact_set(info: Dict[str, Any]) -> None:
     def _s(val: object, maxlen: int) -> str:
         try:
             s = str(val) if val is not None else ""
@@ -87,7 +90,7 @@ def contact_set(info: dict) -> None:
         logging.error(f"Failed to save contact info to {CONTACT_FILE}: {e}")
         raise  # Re-raise so the API can return appropriate error
 
-def hostapd_info(conf_path: str = "/etc/hostapd/hostapd.conf") -> dict:
+def hostapd_info(conf_path: str = "/etc/hostapd/hostapd.conf") -> Dict[str, Any]:
     """Best-effort parse of hostapd.conf so we can show AP SSID/channel."""
     try:
         txt = read_text(Path(conf_path))
@@ -107,7 +110,7 @@ def hostapd_info(conf_path: str = "/etc/hostapd/hostapd.conf") -> dict:
 _health_cache = {"data": None, "timestamp": 0, "fast_mode": None}
 _cache_ttl_seconds = 1.5  # Cache valid for 1.5 seconds
 
-def build_health_payload(fast_mode: bool = False) -> dict:
+def build_health_payload(fast_mode: bool = False) -> Dict[str, Any]:
     # Check cache first
     current_time = time.time()
     if (_health_cache["data"] is not None and 
@@ -223,7 +226,8 @@ def build_health_payload(fast_mode: bool = False) -> dict:
 
 # -------- HTML dashboard --------
 @health_bp.route("/health")
-def health():
+@api_route
+def health() -> str:
     # Use fast mode for initial page load to reduce loading time
     info = build_health_payload(fast_mode=True)
     extra_head = f"""
@@ -906,13 +910,15 @@ def health():
 
 # -------- JSON (programmatic/fallback) --------
 @health_bp.route("/health.json")
-def health_json():
+@api_route
+def health_json() -> Dict[str, Any]:
     return build_health_payload()
 
 # -------- Server-Sent Events --------
 @health_bp.route("/health.sse")
-def health_sse():
-    def stream():
+@api_route
+def health_sse() -> Response:
+    def stream() -> Generator[str, None, None]:
         # Initial burst
         yield f"event: health\ndata: {json.dumps(build_health_payload())}\n\n"
         last_ping = time.time()
@@ -934,11 +940,12 @@ def health_sse():
 
 # -------- Contact info API (persisted to contact.txt) --------
 @health_bp.route("/health/contact", methods=["GET", "POST"])
-def health_contact():
+@api_route
+def health_contact() -> Union[Dict[str, Any], Tuple[Dict[str, Any], int]]:
     if request.method == "GET":
         return {"ok": True, "contact": contact_get()}
     try:
-        payload = request.get_json(force=True, silent=True) or {}
+        payload = validate_json_request()
         info = {
             "name": payload.get("name", ""),
             "address": payload.get("address", ""),
@@ -949,13 +956,16 @@ def health_contact():
         contact_set(info)
         # Return the freshly saved values
         return {"ok": True, "contact": contact_get()}
-    except Exception:
+    except ApiError:
+        raise  # Re-raise ApiErrors as-is
+    except Exception as e:
         # Even if persisting fails, return current on-disk view so UI can recover.
-        return {"ok": False, "contact": contact_get()}, 500
+        raise ApiError(f"Failed to save contact info: {str(e)}", 500)
 
 # -------- Log viewing endpoints --------
 @health_bp.route("/health/logs")
-def health_logs():
+@api_route
+def health_logs() -> Dict[str, Any]:
     """Get recent log entries with filtering."""
     try:
         # Get query parameters
@@ -966,7 +976,7 @@ def health_logs():
         
         # Validate log level
         if min_level not in ["DEBUG", "INFO", "WARNING", "ERROR"]:
-            min_level = "WARNING"
+            raise ApiError(f"Invalid log level: {min_level}", 400)
         
         # Get log entries
         if filter_text:
@@ -997,15 +1007,14 @@ def health_logs():
             }
         }
         
+    except ApiError:
+        raise  # Re-raise ApiErrors as-is
     except Exception as e:
-        return {
-            "ok": False,
-            "error": str(e),
-            "logs": []
-        }, 500
+        raise ApiError(f"Failed to retrieve logs: {str(e)}", 500)
 
 @health_bp.route("/health/logs/stats")
-def health_log_stats():
+@api_route
+def health_log_stats() -> Dict[str, Any]:
     """Get log statistics for monitoring."""
     try:
         stats = log_reader.get_log_stats()
@@ -1014,8 +1023,4 @@ def health_log_stats():
             "stats": stats
         }
     except Exception as e:
-        return {
-            "ok": False,
-            "error": str(e),
-            "stats": {}
-        }, 500
+        raise ApiError(f"Failed to get log stats: {str(e)}", 500)

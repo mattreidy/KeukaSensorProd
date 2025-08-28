@@ -20,7 +20,8 @@ import threading
 import asyncio
 import logging
 from collections import deque
-from typing import Optional
+from typing import Optional, Tuple, Union
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,10 @@ class Camera:
         self._frame_buffer: deque = deque(maxlen=BUFFER_SIZE)
         self._buffer_lock = threading.Lock()
         self._last_frame_time = 0.0
+        
+        # Thread pool for async image processing
+        self._image_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ImageProcessor")
+        self._encoding_queue = asyncio.Queue(maxsize=10)
 
         # Backoff if camera missing
         self._last_fail_time = 0.0
@@ -285,21 +290,11 @@ class Camera:
                     arr = self.pcam.capture_array("main") if self.pcam is not None else None
                     if arr is None:
                         raise RuntimeError("Picamera2 capture failed")
-                    # Prefer OpenCV for speed if available; else Pillow
-                    if cv2 is not None:
-                        ok, buf = cv2.imencode(".jpg", arr, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
-                        if not ok or buf is None:
-                            raise RuntimeError("cv2.imencode failed on Picamera2 frame")
-                        data = bytes(buf.tobytes())
-                    else:
-                        try:
-                            from PIL import Image
-                            im = Image.fromarray(arr)
-                            b = io.BytesIO()
-                            im.save(b, format="JPEG", quality=JPEG_QUALITY, optimize=True)
-                            data = b.getvalue()
-                        except Exception as e:
-                            raise RuntimeError(f"Pillow JPEG encode failed: {e}")
+                    
+                    # Use async JPEG encoding for better performance
+                    data = self._encode_jpeg_sync(arr)
+                    if data is None:
+                        raise RuntimeError("JPEG encoding failed")
 
                 else:
                     # No backend active; reset and try again
@@ -388,11 +383,126 @@ class Camera:
                 "running": self.running
             }
 
+    def _encode_jpeg_sync(self, arr) -> Optional[bytes]:
+        """Synchronous JPEG encoding with fallback options"""
+        # Try OpenCV first (fastest)
+        if cv2 is not None:
+            try:
+                ok, buf = cv2.imencode(".jpg", arr, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+                if ok and buf is not None:
+                    return bytes(buf.tobytes())
+            except Exception:
+                pass
+        
+        # Fallback to Pillow
+        try:
+            from PIL import Image
+            im = Image.fromarray(arr)
+            b = io.BytesIO()
+            im.save(b, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+            return b.getvalue()
+        except Exception:
+            return None
+    
+    async def _encode_jpeg_async(self, arr) -> Optional[bytes]:
+        """Asynchronous JPEG encoding to prevent blocking"""
+        return await asyncio.to_thread(self._encode_jpeg_sync, arr)
+    
+    async def get_jpeg_encoded_async(self, quality: Optional[int] = None) -> Optional[bytes]:
+        """
+        Get an encoded JPEG frame asynchronously with custom quality.
+        Useful for generating thumbnails or different quality levels.
+        """
+        if not self.available or self._mode != "picamera2":
+            return None
+        
+        try:
+            # Capture frame
+            arr = await asyncio.to_thread(
+                lambda: self.pcam.capture_array("main") if self.pcam else None
+            )
+            
+            if arr is None:
+                return None
+            
+            # Encode with custom quality if specified
+            if quality is not None and quality != JPEG_QUALITY:
+                return await self._encode_jpeg_with_quality(arr, quality)
+            else:
+                return await self._encode_jpeg_async(arr)
+                
+        except Exception as e:
+            logger.debug(f"Async JPEG encoding failed: {e}")
+            return None
+    
+    async def _encode_jpeg_with_quality(self, arr, quality: int) -> Optional[bytes]:
+        """Encode JPEG with specific quality setting"""
+        def _encode():
+            if cv2 is not None:
+                try:
+                    ok, buf = cv2.imencode(".jpg", arr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+                    if ok and buf is not None:
+                        return bytes(buf.tobytes())
+                except Exception:
+                    pass
+            
+            # Pillow fallback
+            try:
+                from PIL import Image
+                im = Image.fromarray(arr)
+                b = io.BytesIO()
+                im.save(b, format="JPEG", quality=quality, optimize=True)
+                return b.getvalue()
+            except Exception:
+                return None
+        
+        return await asyncio.to_thread(_encode)
+    
+    async def get_multiple_quality_frames(self, qualities: list[int]) -> dict[int, Optional[bytes]]:
+        """
+        Generate multiple JPEG frames with different quality levels concurrently.
+        Useful for adaptive streaming or generating thumbnails.
+        """
+        if not self.available or self._mode != "picamera2":
+            return {q: None for q in qualities}
+        
+        try:
+            # Capture one frame
+            arr = await asyncio.to_thread(
+                lambda: self.pcam.capture_array("main") if self.pcam else None
+            )
+            
+            if arr is None:
+                return {q: None for q in qualities}
+            
+            # Encode multiple qualities concurrently
+            tasks = [
+                self._encode_jpeg_with_quality(arr, quality)
+                for quality in qualities
+            ]
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            return {
+                quality: result if not isinstance(result, Exception) else None
+                for quality, result in zip(qualities, results)
+            }
+            
+        except Exception as e:
+            logger.debug(f"Multi-quality frame generation failed: {e}")
+            return {q: None for q in qualities}
+    
     def stop(self) -> None:
         self.running = False
         # Let loop exit and then clean up
         time.sleep(0.2)
         self._shutdown_backend()
+        
+        # Clean up thread pool
+        try:
+            self._image_executor.shutdown(wait=False)
+        except Exception:
+            pass
 
 
 # Singleton used by routes
