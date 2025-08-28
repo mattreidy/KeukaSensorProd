@@ -19,7 +19,7 @@ def webcam_page():
       <h1>Webcam</h1>
       <div class="card">
         <p class="muted" id="streamNote">Live MJPEG stream.</p>
-        <img id="webcamImage" src="/stream" alt="Webcam stream" style="max-width:100%;height:auto;border-radius:12px;border:1px solid var(--border)">
+        <img id="webcamImage" src="/snapshot?cb=0" alt="Webcam stream" style="max-width:100%;height:auto;border-radius:12px;border:1px solid var(--border)">
       </div>
       <p class="muted">If the image does not load, check service logs for camera initialization errors.</p>
       
@@ -45,11 +45,14 @@ def webcam_page():
           // Refresh every 2 seconds
           setInterval(refreshSnapshot, 2000);
         } else {
-          // Direct access - use live stream (make it proxy-aware just in case)
+          // Direct access - use live stream
           const img = document.getElementById('webcamImage');
-          if (img && window.getProxyAwareUrl) {
-            img.src = window.getProxyAwareUrl('/stream');
+          const note = document.getElementById('streamNote');
+          
+          if (img) {
+            img.src = window.getProxyAwareUrl ? window.getProxyAwareUrl('/stream') : '/stream';
           }
+          note.textContent = 'Live MJPEG stream.';
         }
       });
       </script>
