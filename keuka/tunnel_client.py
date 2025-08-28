@@ -257,12 +257,12 @@ class TunnelClient:
     def _handle_sse_request(self, request_id, request_kwargs):
         """Handle Server-Sent Events streaming requests"""
         try:
-            # For SSE, collect the first event and send it, then let the client reconnect
-            # This is simpler and more reliable than trying to stream indefinitely through the tunnel
+            # For SSE through tunnel, collect a few events and send as complete response
+            # This prevents infinite streaming while providing multiple updates
             request_kwargs['stream'] = True
-            request_kwargs['timeout'] = (10, 30)  # 30 second read timeout to get first event
+            request_kwargs['timeout'] = (10, 60)  # 60 second read timeout to collect events
             
-            logger.info(f"Collecting initial SSE event for {request_id}")
+            logger.info(f"Collecting SSE events for {request_id}")
             
             response = requests.request(**request_kwargs)
             
@@ -271,13 +271,15 @@ class TunnelClient:
                 self._send_error_response(request_id, f"SSE endpoint returned {response.status_code}", response.status_code)
                 return
             
-            # Collect the first complete SSE event (up to first double newline)
+            # Collect multiple SSE events for a better user experience
             sse_content = ""
             line_buffer = ""
-            event_complete = False
+            events_collected = 0
+            max_events = 3  # Collect up to 3 events
+            start_time = time.time()
             
             try:
-                # Read until we get a complete SSE event
+                # Read multiple SSE events
                 for chunk in response.iter_content(chunk_size=512, decode_unicode=True):
                     if not chunk:
                         continue
@@ -287,24 +289,31 @@ class TunnelClient:
                     
                     # Check if we have a complete SSE event (ends with \n\n)
                     if '\n\n' in line_buffer:
-                        event_complete = True
-                        break
+                        events_collected += 1
+                        line_buffer = ""  # Reset for next event
+                        
+                        # Stop after collecting enough events or timeout
+                        if events_collected >= max_events or (time.time() - start_time) > 30:
+                            break
                     
                     # Safety limit - don't let SSE content get too large
-                    if len(sse_content) > 50000:  # 50KB limit
-                        logger.warning(f"SSE content too large for request {request_id}, truncating")
+                    if len(sse_content) > 100000:  # 100KB limit
+                        logger.warning(f"SSE content too large for request {request_id}, stopping collection")
                         break
                 
                 # Close the response stream
                 response.close()
                 
-                if event_complete or sse_content.strip():
-                    # Send the collected SSE content as a response
+                if sse_content.strip():
+                    # Send the collected SSE content as a complete response
                     response_headers = {
                         'Content-Type': 'text/event-stream',
                         'Cache-Control': 'no-cache',
-                        'Connection': 'close',  # Force client to reconnect for next update
+                        'Connection': 'keep-alive',  # Keep connection alive so browser doesn't treat as error
                     }
+                    
+                    # Add a final event to signal end of this batch
+                    sse_content += "event: batch_end\ndata: {\"batch_complete\": true}\n\n"
                     
                     tunnel_response = requests.post(
                         self.response_url,
@@ -319,7 +328,7 @@ class TunnelClient:
                     )
                     tunnel_response.raise_for_status()
                     
-                    logger.info(f"SSE event sent for request {request_id} ({len(sse_content)} bytes)")
+                    logger.info(f"SSE batch sent for request {request_id} ({events_collected} events, {len(sse_content)} bytes)")
                 else:
                     logger.warning(f"No SSE content received for request {request_id}")
                     self._send_error_response(request_id, "No SSE data received", status_code=204)

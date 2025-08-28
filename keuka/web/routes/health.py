@@ -700,10 +700,17 @@ def health():
           render(seed);
         }} catch (_e) {{}}
 
-        // SSE hookup (fallback to polling if SSE unsupported)
+        // SSE hookup (fallback to polling if SSE unsupported or proxy mode)
         let es = null;
         function connectSSE() {{
-          if (!window.EventSource) {{ document.getElementById('connDot').className = "dot"; pollFallback(); return; }}
+          // Check if we're in proxy mode - if so, use polling instead of SSE
+          const isProxy = window.location.pathname.includes('/proxy/');
+          if (isProxy || !window.EventSource) {{ 
+            document.getElementById('connDot').className = "dot"; 
+            pollFallback(); 
+            return; 
+          }}
+          
           es = new EventSource((window.getProxyAwareUrl || (p => p))('/health.sse'));
           const dot = document.getElementById('connDot');
           es.onopen = () => {{ dot.className="dot ok"; }};
