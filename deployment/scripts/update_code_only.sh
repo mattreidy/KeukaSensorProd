@@ -299,6 +299,19 @@ do_apply() {
     exit 3
   fi
 
+  # Ensure tunnel service is also running after code update
+  echo "[update_code_only] ensuring tunnel service is running: keuka-tunnel"
+  if systemctl is-enabled keuka-tunnel >/dev/null 2>&1; then
+    if ! systemctl restart keuka-tunnel; then
+      echo "[update_code_only] WARNING: tunnel service restart failed, but continuing"
+      systemctl status keuka-tunnel --no-pager || true
+    else
+      echo "[update_code_only] tunnel service restarted successfully"
+    fi
+  else
+    echo "[update_code_only] tunnel service not found or not enabled, skipping"
+  fi
+
   # Optional health check (supports Basic Auth if vars are set)
   sleep 2
   if command -v curl >/dev/null 2>&1; then
