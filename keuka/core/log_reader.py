@@ -25,13 +25,23 @@ class LogEntry:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         from datetime import timezone
+        import time
         
         # Handle timezone-aware vs naive datetime comparison
         now = datetime.now(timezone.utc) if self.timestamp.tzinfo else datetime.now()
         
+        # Convert timestamp to local time for display
+        if self.timestamp.tzinfo:
+            # Convert UTC timestamp to local timezone
+            local_timestamp = self.timestamp.astimezone()
+            timestamp_local_str = local_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            # Already local time
+            timestamp_local_str = self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        
         return {
             "timestamp": self.timestamp.isoformat(),
-            "timestamp_local": self.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp_local": timestamp_local_str,
             "level": self.level,
             "logger": self.logger,
             "message": self.message,
@@ -104,6 +114,16 @@ class LogReader:
                 level = 'INFO'  # Default level
                 logger = 'keuka'  # Default logger
                 
+                # Try to identify the service from the raw line
+                if 'keuka-tunnel' in line:
+                    logger = 'keuka.tunnel'
+                elif 'keuka-sensor-push' in line:
+                    logger = 'keuka.sensor-push'
+                elif 'keuka-sync-sensor-env' in line:
+                    logger = 'keuka.sync-env'
+                elif 'keuka-sensor' in line:
+                    logger = 'keuka.sensor'
+                
                 # Look for common log patterns in the message
                 if 'ERROR' in message.upper() or 'FAILED' in message.upper():
                     level = 'ERROR'
@@ -140,26 +160,45 @@ class LogReader:
             return []
     
     def _read_journalctl_logs(self, max_lines: int = 500, hours_back: int = 24) -> List[str]:
-        """Read logs from journalctl for keuka-sensor service."""
+        """Read logs from journalctl for all keuka-related services."""
         try:
-            # Get logs from keuka-sensor service for the specified time period
-            cmd = [
-                'journalctl', 
-                '-u', 'keuka-sensor', 
-                '--no-pager', 
-                f'--since={hours_back} hours ago',
-                f'-n', str(max_lines),
-                '--output=short-iso'
+            # Get logs from all keuka services for the specified time period
+            services = [
+                'keuka-sensor',
+                'keuka-tunnel', 
+                'keuka-sensor-push',
+                'keuka-sync-sensor-env'
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            if result.returncode != 0:
-                print(f"Error running journalctl: {result.stderr}")
-                return []
+            all_lines = []
+            lines_per_service = max(max_lines // len(services), 50)  # Distribute lines across services
             
-            lines = result.stdout.strip().split('\n')
-            # Filter out the header line and empty lines
-            return [line for line in lines if line and not line.startswith('-- ')]
+            for service in services:
+                cmd = [
+                    'journalctl', 
+                    '-u', service,
+                    '--no-pager', 
+                    f'--since={hours_back} hours ago',
+                    f'-n', str(lines_per_service),
+                    '--output=short-iso'
+                ]
+                
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+                    if result.returncode == 0:
+                        lines = result.stdout.strip().split('\n')
+                        # Filter out the header line and empty lines
+                        service_lines = [line for line in lines if line and not line.startswith('-- ')]
+                        all_lines.extend(service_lines)
+                    else:
+                        print(f"Warning: Failed to get logs for service {service}: {result.stderr}")
+                except subprocess.TimeoutExpired:
+                    print(f"Warning: Timeout getting logs for service {service}")
+                except Exception as e:
+                    print(f"Warning: Error getting logs for service {service}: {e}")
+            
+            # Return combined lines from all services
+            return all_lines[:max_lines]  # Limit total lines
             
         except subprocess.TimeoutExpired:
             print("Timeout reading journalctl logs")
