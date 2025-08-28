@@ -78,40 +78,60 @@ def render_page(title: str, body_html: str, extra_head: str = "") -> str:
     // Make all navigation and API calls proxy-aware
     document.addEventListener('DOMContentLoaded', function() {
         const isProxy = window.location.pathname.includes('/proxy/');
+        let baseUrl = '';
+        
         if (isProxy) {
-            const baseUrl = window.location.pathname.split('/proxy/')[0] + '/proxy';
-            window.proxyBaseUrl = baseUrl; // Make available globally
-            
+            baseUrl = window.location.pathname.split('/proxy/')[0] + '/proxy';
+        }
+        
+        // Make proxy-aware URL helper available globally
+        window.getProxyAwareUrl = function(path) {
+            if (!path || !path.startsWith('/')) return path;
+            if (baseUrl && !path.startsWith(baseUrl)) {
+                return baseUrl + path;
+            }
+            return path;
+        };
+        
+        window.proxyBaseUrl = baseUrl; // Legacy support
+        
+        if (isProxy) {
             // Update navigation links
             document.querySelectorAll('nav a[href^="/"]').forEach(link => {
                 const originalHref = link.getAttribute('href');
-                link.setAttribute('href', baseUrl + originalHref);
+                link.setAttribute('href', window.getProxyAwareUrl(originalHref));
             });
             
             // Update any other internal links in the page content
             document.querySelectorAll('a[href^="/"]').forEach(link => {
                 if (!link.getAttribute('href').startsWith(baseUrl)) {
                     const originalHref = link.getAttribute('href');
-                    link.setAttribute('href', baseUrl + originalHref);
+                    link.setAttribute('href', window.getProxyAwareUrl(originalHref));
                 }
             });
             
             // Update form actions if any
             document.querySelectorAll('form[action^="/"]').forEach(form => {
                 const originalAction = form.getAttribute('action');
-                form.setAttribute('action', baseUrl + originalAction);
+                form.setAttribute('action', window.getProxyAwareUrl(originalAction));
+            });
+            
+            // Update image sources (for webcam thumbnails and streams)
+            document.querySelectorAll('img[src^="/"]').forEach(img => {
+                const originalSrc = img.getAttribute('src');
+                img.setAttribute('src', window.getProxyAwareUrl(originalSrc));
             });
             
             // Intercept dynamically created links and API calls
             const originalFetch = window.fetch;
             window.fetch = function(url, options) {
                 if (typeof url === 'string' && url.startsWith('/') && !url.startsWith(baseUrl)) {
-                    url = baseUrl + url;
+                    url = window.getProxyAwareUrl(url);
                 }
                 return originalFetch(url, options);
             };
             
-            // Watch for dynamically added links
+            // Watch for dynamically added elements
             const observer = new MutationObserver(function(mutations) {
                 mutations.forEach(function(mutation) {
                     mutation.addedNodes.forEach(function(node) {
@@ -119,26 +139,38 @@ def render_page(title: str, body_html: str, extra_head: str = "") -> str:
                             // Update any new links
                             if (node.tagName === 'A' && node.getAttribute('href') && node.getAttribute('href').startsWith('/') && !node.getAttribute('href').startsWith(baseUrl)) {
                                 const href = node.getAttribute('href');
-                                node.setAttribute('href', baseUrl + href);
+                                node.setAttribute('href', window.getProxyAwareUrl(href));
+                            }
+                            // Update any new images
+                            if (node.tagName === 'IMG' && node.getAttribute('src') && node.getAttribute('src').startsWith('/') && !node.getAttribute('src').startsWith(baseUrl)) {
+                                const src = node.getAttribute('src');
+                                node.setAttribute('src', window.getProxyAwareUrl(src));
                             }
                             // Update any new forms
                             if (node.tagName === 'FORM' && node.getAttribute('action') && node.getAttribute('action').startsWith('/') && !node.getAttribute('action').startsWith(baseUrl)) {
                                 const action = node.getAttribute('action');
-                                node.setAttribute('action', baseUrl + action);
+                                node.setAttribute('action', window.getProxyAwareUrl(action));
                             }
                             // Update nested elements
                             const nestedLinks = node.querySelectorAll('a[href^="/"]');
                             nestedLinks.forEach(link => {
                                 if (!link.getAttribute('href').startsWith(baseUrl)) {
                                     const href = link.getAttribute('href');
-                                    link.setAttribute('href', baseUrl + href);
+                                    link.setAttribute('href', window.getProxyAwareUrl(href));
+                                }
+                            });
+                            const nestedImages = node.querySelectorAll('img[src^="/"]');
+                            nestedImages.forEach(img => {
+                                if (!img.getAttribute('src').startsWith(baseUrl)) {
+                                    const src = img.getAttribute('src');
+                                    img.setAttribute('src', window.getProxyAwareUrl(src));
                                 }
                             });
                             const nestedForms = node.querySelectorAll('form[action^="/"]');
                             nestedForms.forEach(form => {
                                 if (!form.getAttribute('action').startsWith(baseUrl)) {
                                     const action = form.getAttribute('action');
-                                    form.setAttribute('action', baseUrl + action);
+                                    form.setAttribute('action', window.getProxyAwareUrl(action));
                                 }
                             });
                         }
@@ -146,6 +178,9 @@ def render_page(title: str, body_html: str, extra_head: str = "") -> str:
                 });
             });
             observer.observe(document.body, { childList: true, subtree: true });
+        } else {
+            // Even in direct mode, make helper available (returns path unchanged)
+            window.getProxyAwareUrl = function(path) { return path; };
         }
     });
     </script>

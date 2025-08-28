@@ -637,7 +637,7 @@ def health():
             
             // Only refresh thumbnail if we have fresh frames (< 5 seconds old) and active buffer
             if (frameAge < 5 && bufferSize > 0) {{
-              th.src = "/snapshot?cb=" + Date.now();
+              th.src = window.getProxyAwareUrl("/snapshot?cb=" + Date.now());
             }}
           }}
 
@@ -660,7 +660,7 @@ def health():
         let es = null;
         function connectSSE() {{
           if (!window.EventSource) {{ document.getElementById('connDot').className = "dot"; pollFallback(); return; }}
-          es = new EventSource('/health.sse');
+          es = new EventSource(window.getProxyAwareUrl('/health.sse'));
           const dot = document.getElementById('connDot');
           es.onopen = () => {{ dot.className="dot ok"; }};
           es.onerror = () => {{ dot.className="dot err"; try {{ es.close(); }} catch(_e) {{}}; setTimeout(connectSSE, 3000); }};
