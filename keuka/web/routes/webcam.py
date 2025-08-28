@@ -18,10 +18,41 @@ def webcam_page():
     body = """
       <h1>Webcam</h1>
       <div class="card">
-        <p class="muted">Live MJPEG stream.</p>
-        <img src="/stream" alt="Webcam stream" style="max-width:100%;height:auto;border-radius:12px;border:1px solid var(--border)">
+        <p class="muted" id="streamNote">Live MJPEG stream.</p>
+        <img id="webcamImage" src="/stream" alt="Webcam stream" style="max-width:100%;height:auto;border-radius:12px;border:1px solid var(--border)">
       </div>
       <p class="muted">If the image does not load, check service logs for camera initialization errors.</p>
+      
+      <script>
+      // Handle proxy mode - use snapshots instead of stream to avoid tunnel issues
+      document.addEventListener('DOMContentLoaded', function() {
+        const isProxy = window.location.pathname.includes('/proxy/');
+        if (isProxy) {
+          const img = document.getElementById('webcamImage');
+          const note = document.getElementById('streamNote');
+          
+          note.textContent = 'Auto-refreshing snapshots (proxy mode - live stream not supported).';
+          
+          function refreshSnapshot() {
+            if (img) {
+              img.src = window.getProxyAwareUrl('/snapshot?cb=' + Date.now());
+            }
+          }
+          
+          // Start with first snapshot
+          refreshSnapshot();
+          
+          // Refresh every 2 seconds
+          setInterval(refreshSnapshot, 2000);
+        } else {
+          // Direct access - use live stream (make it proxy-aware just in case)
+          const img = document.getElementById('webcamImage');
+          if (img && window.getProxyAwareUrl) {
+            img.src = window.getProxyAwareUrl('/stream');
+          }
+        }
+      });
+      </script>
     """
     return render_page("Keuka Sensor – Webcam", body)
 
