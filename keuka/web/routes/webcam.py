@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 import time
-from typing import Response as ResponseType, Generator
+from typing import Generator
 from flask import Blueprint, Response
 from ...camera import camera  # backend-agnostic; produces JPEG bytes
 from ...ui import render_page
@@ -65,7 +65,7 @@ def webcam_page() -> str:
 
 @webcam_bp.route("/stream")
 @api_route
-def stream_mjpeg() -> ResponseType:
+def stream_mjpeg() -> Response:
     # Ensure background capture thread is running
     if not camera.running:
         try:
@@ -120,7 +120,7 @@ def stream_mjpeg() -> ResponseType:
 
 @webcam_bp.route("/snapshot")
 @api_route
-def snapshot_jpeg() -> ResponseType:
+def snapshot_jpeg() -> Response:
     if not camera.running:
         try:
             camera.start()
