@@ -491,7 +491,7 @@ def health():
               email: document.getElementById('c_email').value,
               notes: document.getElementById('c_notes').value,
             }};
-            const r = await fetch('/health/contact', {{
+            const r = await fetch((window.getProxyAwareUrl || (p => p))('/health/contact'), {{
               method: 'POST',
               headers: {{ 'Content-Type': 'application/json' }},
               body: JSON.stringify(payload),
@@ -637,7 +637,7 @@ def health():
             
             // Only refresh thumbnail if we have fresh frames (< 5 seconds old) and active buffer
             if (frameAge < 5 && bufferSize > 0) {{
-              th.src = window.getProxyAwareUrl("/snapshot?cb=" + Date.now());
+              th.src = (window.getProxyAwareUrl || (p => p))("/snapshot?cb=" + Date.now());
             }}
           }}
 
@@ -660,7 +660,7 @@ def health():
         let es = null;
         function connectSSE() {{
           if (!window.EventSource) {{ document.getElementById('connDot').className = "dot"; pollFallback(); return; }}
-          es = new EventSource(window.getProxyAwareUrl('/health.sse'));
+          es = new EventSource((window.getProxyAwareUrl || (p => p))('/health.sse'));
           const dot = document.getElementById('connDot');
           es.onopen = () => {{ dot.className="dot ok"; }};
           es.onerror = () => {{ dot.className="dot err"; try {{ es.close(); }} catch(_e) {{}}; setTimeout(connectSSE, 3000); }};
@@ -669,7 +669,7 @@ def health():
         async function pollFallback() {{
           const dot = document.getElementById('connDot');
           async function once() {{
-            try {{ const r = await fetch('/health.json', {{cache:'no-store'}}); const data = await r.json(); render(data); dot.className="dot ok"; }}
+            try {{ const r = await fetch((window.getProxyAwareUrl || (p => p))('/health.json'), {{cache:'no-store'}}); const data = await r.json(); render(data); dot.className="dot ok"; }}
             catch(_e) {{ dot.className="dot err"; }}
           }}
           once(); setInterval(once, 5000);
@@ -720,7 +720,7 @@ def health():
               url += `&filter=${{encodeURIComponent(filter)}}`;
             }}
             
-            const response = await fetch(url);
+            const response = await fetch((window.getProxyAwareUrl || (p => p))(url));
             const data = await response.json();
             
             if (data.ok && data.logs) {{
@@ -820,7 +820,7 @@ def health():
         // Load log stats on page load
         async function loadLogStats() {{
           try {{
-            const response = await fetch('/health/logs/stats');
+            const response = await fetch((window.getProxyAwareUrl || (p => p))('/health/logs/stats'));
             const data = await response.json();
             
             if (data.ok && data.stats) {{
