@@ -4,6 +4,7 @@
 import os
 import re
 import time
+import subprocess
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -23,6 +24,11 @@ class LogEntry:
         
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
+        from datetime import timezone
+        
+        # Handle timezone-aware vs naive datetime comparison
+        now = datetime.now(timezone.utc) if self.timestamp.tzinfo else datetime.now()
+        
         return {
             "timestamp": self.timestamp.isoformat(),
             "timestamp_local": self.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
@@ -30,7 +36,7 @@ class LogEntry:
             "logger": self.logger,
             "message": self.message,
             "raw_line": self.raw_line,
-            "age_seconds": int((datetime.now() - self.timestamp).total_seconds())
+            "age_seconds": int((now - self.timestamp).total_seconds())
         }
     
     def matches_filter(self, filter_text: str) -> bool:
@@ -52,6 +58,11 @@ class LogReader:
         r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+\[(\w+)\]\s+([^:]+):\s+(.+)$'
     )
     
+    # Regex pattern for journalctl format: 2025-08-28T15:10:25-0400 hostname service[pid]: message
+    JOURNALCTL_PATTERN = re.compile(
+        r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[-+]\d{4})\s+\S+\s+\S+\[\d+\]:\s+(.+)$'
+    )
+    
     def __init__(self, log_file_path: Optional[Path] = None):
         if log_file_path:
             self.log_file = Path(log_file_path)
@@ -63,17 +74,56 @@ class LogReader:
     
     def _parse_log_line(self, line: str) -> Optional[LogEntry]:
         """Parse a single log line into a LogEntry object."""
-        match = self.LOG_PATTERN.match(line.strip())
-        if not match:
-            return None
-            
-        timestamp_str, level, logger, message = match.groups()
+        line = line.strip()
         
-        try:
-            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-            return LogEntry(timestamp, level, logger, message, line)
-        except ValueError:
-            return None
+        # Try standard log format first
+        match = self.LOG_PATTERN.match(line)
+        if match:
+            timestamp_str, level, logger, message = match.groups()
+            try:
+                timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                return LogEntry(timestamp, level, logger, message, line)
+            except ValueError:
+                pass
+        
+        # Try journalctl format
+        match = self.JOURNALCTL_PATTERN.match(line)
+        if match:
+            timestamp_str, message = match.groups()
+            try:
+                from datetime import timezone
+                # Parse ISO format timestamp - fix timezone format for Python
+                # Convert -0400 to -04:00 format
+                if timestamp_str[-5] in '+-' and timestamp_str[-4:].isdigit():
+                    timestamp_str = timestamp_str[:-2] + ':' + timestamp_str[-2:]
+                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                # Convert to UTC for consistent comparison
+                timestamp = timestamp.astimezone(timezone.utc)
+                
+                # Extract log level and logger from message if possible
+                level = 'INFO'  # Default level
+                logger = 'keuka'  # Default logger
+                
+                # Look for common log patterns in the message
+                if 'ERROR' in message.upper() or 'FAILED' in message.upper():
+                    level = 'ERROR'
+                elif 'WARNING' in message.upper() or 'WARN' in message.upper():
+                    level = 'WARNING'
+                elif 'DEBUG' in message.upper():
+                    level = 'DEBUG'
+                
+                # Try to extract logger from message
+                if ': ' in message:
+                    parts = message.split(': ', 1)
+                    if '.' in parts[0] and len(parts[0]) < 50:  # Looks like a logger name
+                        logger = parts[0]
+                        message = parts[1]
+                
+                return LogEntry(timestamp, level, logger, message, line)
+            except (ValueError, TypeError):
+                pass
+        
+        return None
     
     def _read_log_file(self, max_lines: int = 500) -> List[str]:
         """Read the last N lines from the log file efficiently."""
@@ -87,6 +137,35 @@ class LogReader:
                 return lines[-max_lines:] if lines else []
         except Exception as e:
             print(f"Error reading log file {self.log_file}: {e}")
+            return []
+    
+    def _read_journalctl_logs(self, max_lines: int = 500, hours_back: int = 24) -> List[str]:
+        """Read logs from journalctl for keuka-sensor service."""
+        try:
+            # Get logs from keuka-sensor service for the specified time period
+            cmd = [
+                'journalctl', 
+                '-u', 'keuka-sensor', 
+                '--no-pager', 
+                f'--since={hours_back} hours ago',
+                f'-n', str(max_lines),
+                '--output=short-iso'
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                print(f"Error running journalctl: {result.stderr}")
+                return []
+            
+            lines = result.stdout.strip().split('\n')
+            # Filter out the header line and empty lines
+            return [line for line in lines if line and not line.startswith('-- ')]
+            
+        except subprocess.TimeoutExpired:
+            print("Timeout reading journalctl logs")
+            return []
+        except Exception as e:
+            print(f"Error reading journalctl logs: {e}")
             return []
     
     def get_recent_entries(self, 
@@ -112,15 +191,20 @@ class LogReader:
         if use_cache and (current_time - self._last_read_time) < self._cache_duration:
             return self._filter_entries(self._cached_entries, max_entries, min_level, hours_back)
         
-        # Read fresh entries
-        lines = self._read_log_file(max_lines=1000)  # Read more lines to have buffer
+        # Read fresh entries from both file and journalctl
+        file_lines = self._read_log_file(max_lines=1000)  # Read more lines to have buffer
+        journal_lines = self._read_journalctl_logs(max_lines=1000, hours_back=hours_back)
+        
+        # Combine all lines
+        all_lines = file_lines + journal_lines
         entries = []
         
-        cutoff_time = datetime.now() - timedelta(hours=hours_back)
+        from datetime import timezone
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
         level_priority = {'DEBUG': 0, 'INFO': 1, 'WARNING': 2, 'ERROR': 3}
         min_priority = level_priority.get(min_level.upper(), 1)
         
-        for line in reversed(lines):  # Process newest first
+        for line in all_lines:  # Process all lines
             entry = self._parse_log_line(line)
             if entry:
                 # Check time cutoff
@@ -135,16 +219,31 @@ class LogReader:
                 if len(entries) >= max_entries * 2:  # Get extra for filtering
                     break
         
+        # Remove duplicates and sort by timestamp (newest first)
+        unique_entries = []
+        seen_lines = set()
+        
+        for entry in entries:
+            # Use a combination of timestamp and message to identify duplicates
+            key = f"{entry.timestamp.isoformat()}|{entry.message[:100]}"
+            if key not in seen_lines:
+                seen_lines.add(key)
+                unique_entries.append(entry)
+        
+        # Sort by timestamp, newest first
+        unique_entries.sort(key=lambda e: e.timestamp, reverse=True)
+        
         # Cache the results
-        self._cached_entries = entries
+        self._cached_entries = unique_entries
         self._last_read_time = current_time
         
-        return self._filter_entries(entries, max_entries, min_level, hours_back)
+        return self._filter_entries(unique_entries, max_entries, min_level, hours_back)
     
     def _filter_entries(self, entries: List[LogEntry], max_entries: int, 
                        min_level: str, hours_back: int) -> List[LogEntry]:
         """Apply final filtering and limiting to entries."""
-        cutoff_time = datetime.now() - timedelta(hours=hours_back)
+        from datetime import timezone
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
         level_priority = {'DEBUG': 0, 'INFO': 1, 'WARNING': 2, 'ERROR': 3}
         min_priority = level_priority.get(min_level.upper(), 1)
         
