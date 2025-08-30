@@ -57,6 +57,6 @@ if not SENSOR_NAME:
         SENSOR_NAME = "sensor-unknown"
 
 # App
-VERSION = "V5.2"
+VERSION = "V5.11"
 
 
