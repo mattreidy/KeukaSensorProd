@@ -58,6 +58,6 @@ except Exception:
         SENSOR_NAME = "sensor-unknown"
 
 # App
-VERSION = "V5.17"
+VERSION = "V5.18"
 
 
