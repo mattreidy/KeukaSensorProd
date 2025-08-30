@@ -16,20 +16,21 @@ import sys
 # Add the keuka directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Read from environment variables first, then config as fallback
-SENSOR_NAME = os.environ.get('SENSOR_NAME')
+# Configuration
 KEUKA_SERVER_URL = os.environ.get('KEUKA_SERVER_URL', 'https://keuka.org')
 
-# If not in environment, try importing from config
-if not SENSOR_NAME:
+# Always use hardware-generated sensor name (consistent with main config)
+try:
+    from config import SENSOR_NAME, KEUKA_SERVER_URL
+except ImportError:
+    # If config import fails, try hardware generation directly
     try:
-        from config import SENSOR_NAME, KEUKA_SERVER_URL
-    except ImportError:
-        pass
-
-# Final fallback
-if not SENSOR_NAME:
-    SENSOR_NAME = "keukasensor1"
+        sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'core'))
+        from utils import generate_hardware_sensor_id
+        SENSOR_NAME = generate_hardware_sensor_id()
+    except Exception:
+        # Final fallback to environment or default
+        SENSOR_NAME = os.environ.get('SENSOR_NAME', "sensor-unknown")
 
 logger = logging.getLogger(__name__)
 

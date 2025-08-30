@@ -43,16 +43,17 @@ CPU_TEMP_WARN_C = float(os.environ.get("KS_CPU_WARN_C", "75"))
 CPU_TEMP_CRIT_C = float(os.environ.get("KS_CPU_CRIT_C", "85"))
 
 # Tunnel configuration
-SENSOR_NAME = os.environ.get('SENSOR_NAME')
 KEUKA_SERVER_URL = os.environ.get('KEUKA_SERVER_URL', 'https://keuka.org')
 TUNNEL_ENABLED = os.environ.get('TUNNEL_ENABLED', 'true').lower() == 'true'
 
-# Use hardware-generated sensor name if not in environment
-if not SENSOR_NAME:
-    try:
-        from .utils import generate_hardware_sensor_id
-        SENSOR_NAME = generate_hardware_sensor_id()
-    except Exception:
+# Always use hardware-generated sensor name (ignoring any environment SENSOR_NAME)
+try:
+    from .utils import generate_hardware_sensor_id
+    SENSOR_NAME = generate_hardware_sensor_id()
+except Exception:
+    # Fallback to environment variable if hardware naming fails
+    SENSOR_NAME = os.environ.get('SENSOR_NAME')
+    if not SENSOR_NAME:
         # Ultimate fallback
         SENSOR_NAME = "sensor-unknown"
 
