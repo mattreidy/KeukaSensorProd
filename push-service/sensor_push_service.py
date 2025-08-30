@@ -60,21 +60,20 @@ class SensorPushService:
         return default_config
     
     def detect_sensor_name(self):
-        """Determine sensor name from device config or fallbacks"""
-        # First try to get from device configuration
-        device_conf_path = "/home/pi/KeukaSensorProd/configuration/services/device.conf"
+        """Determine sensor name using hardware-based generation (consistent with main app)"""
         try:
-            if os.path.exists(device_conf_path):
-                with open(device_conf_path, 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line.startswith('device_name='):
-                            device_name = line.split('=', 1)[1].strip()
-                            if device_name:
-                                logging.info(f"Using device name from device config: {device_name}")
-                                return device_name
+            # Import the same hardware-based naming from main app
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'keuka'))
+            from core.utils import generate_hardware_sensor_id
+            
+            hardware_name = generate_hardware_sensor_id()
+            logging.info(f"Using hardware-generated sensor name: {hardware_name}")
+            return hardware_name
+            
+        except ImportError as e:
+            logging.warning(f"Failed to import hardware naming, using fallback: {e}")
         except Exception as e:
-            logging.warning(f"Failed to read device config: {e}")
+            logging.warning(f"Hardware naming failed, using fallback: {e}")
         
         # Fallback to sensor config (for backward compatibility)
         device_name = self.config.get('device_name')
