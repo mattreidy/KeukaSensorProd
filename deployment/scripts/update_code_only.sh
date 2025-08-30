@@ -299,6 +299,19 @@ do_apply() {
     exit 3
   fi
 
+  # Restart push service to load updated code
+  echo "[update_code_only] restarting push service: keuka-sensor-push.timer"
+  if systemctl is-enabled keuka-sensor-push.timer >/dev/null 2>&1; then
+    if ! systemctl restart keuka-sensor-push.timer; then
+      echo "[update_code_only] WARNING: push service restart failed, but continuing"
+      systemctl status keuka-sensor-push.timer --no-pager || true
+    else
+      echo "[update_code_only] push service timer restarted successfully"
+    fi
+  else
+    echo "[update_code_only] push service timer not found or not enabled, skipping"
+  fi
+
   # Ensure tunnel service is also running after code update
   echo "[update_code_only] ensuring tunnel service is running: keuka-tunnel"
   if systemctl is-enabled keuka-tunnel >/dev/null 2>&1; then
