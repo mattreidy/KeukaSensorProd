@@ -66,37 +66,62 @@ def write_text_atomic(path: Path, content: str, sudo_mv: bool = False) -> bool:
         tmp.replace(path)
         return True
 
+def generate_hardware_sensor_id() -> str:
+    """
+    Generate hardware-based sensor ID that survives SD card cloning.
+    ID is generated dynamically each time and is unique per hardware.
+    """
+    # Try Raspberry Pi CPU serial first (most reliable)
+    try:
+        with open('/proc/cpuinfo', 'r') as f:
+            for line in f:
+                if 'Serial' in line and ':' in line:
+                    serial = line.split(':', 1)[1].strip()
+                    if serial and len(serial) >= 8 and serial != '0000000000000000':
+                        return f"sensor-{serial[-8:].lower()}"
+    except Exception:
+        pass
+    
+    # Try ethernet MAC address
+    try:
+        with open('/sys/class/net/eth0/address', 'r') as f:
+            mac = f.read().strip()
+            if mac and len(mac) >= 6:
+                mac_clean = mac.replace(':', '').lower()
+                return f"sensor-{mac_clean[-8:]}"
+    except Exception:
+        pass
+    
+    # Try first WiFi MAC address
+    try:
+        with open('/sys/class/net/wlan0/address', 'r') as f:
+            mac = f.read().strip()
+            if mac and len(mac) >= 6:
+                mac_clean = mac.replace(':', '').lower()
+                return f"sensor-{mac_clean[-8:]}"
+    except Exception:
+        pass
+    
+    # Final fallback - hash of hostname + warning
+    try:
+        import hashlib
+        hostname = subprocess.getoutput("hostname").strip()
+        if hostname:
+            hash_id = hashlib.md5(hostname.encode()).hexdigest()[:8]
+            return f"sensor-{hash_id}"
+    except Exception:
+        pass
+    
+    # Last resort with random component
+    import time
+    fallback_id = f"{int(time.time()) % 100000000:08x}"
+    return f"sensor-{fallback_id}"
+
 def get_device_name() -> str:
     """
-    Get the device name from configuration, with fallbacks.
+    Get the hardware-generated device name. Always returns a unique sensor ID.
     """
-    # Try to read device configuration
-    device_conf = Path("/home/pi/KeukaSensorProd/configuration/services/device.conf")
-    try:
-        if device_conf.exists():
-            conf_text = device_conf.read_text(errors="replace")
-            for line in conf_text.splitlines():
-                s = line.strip()
-                if not s or s.startswith("#"):
-                    continue
-                m = re.match(r"device_name\s*=\s*(.*)$", s, re.IGNORECASE)
-                if m:
-                    device_name = m.group(1).strip().strip('"').strip("'")
-                    if device_name:
-                        return device_name
-    except Exception:
-        pass
-    
-    # Fallback to system hostname
-    try:
-        hostname = subprocess.getoutput("hostname").strip()
-        if hostname and 'sensor' in hostname.lower():
-            return hostname
-    except Exception:
-        pass
-    
-    # Last resort
-    return "sensor1"
+    return generate_hardware_sensor_id()
 
 def get_system_fqdn() -> str:
     """
@@ -104,19 +129,4 @@ def get_system_fqdn() -> str:
     """
     return get_device_name()
 
-def set_device_name(name: str) -> bool:
-    """
-    Set the device name in configuration file.
-    """
-    device_conf = Path("/home/pi/KeukaSensorProd/configuration/services/device.conf")
-    try:
-        # Validate device name (simple alphanumeric + underscore/dash)
-        if not re.match(r'^[a-zA-Z0-9_-]+$', name):
-            return False
-        
-        content = f"device_name={name}\n"
-        device_conf.parent.mkdir(parents=True, exist_ok=True)
-        device_conf.write_text(content, encoding="utf-8")
-        return True
-    except Exception:
-        return False
+# set_device_name() removed - sensor names are now hardware-generated automatically

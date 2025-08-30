@@ -22,7 +22,7 @@ from flask import Blueprint, jsonify, request
 
 from ..ui import render_page
 from ..config import WLAN_STA_IFACE, WLAN_AP_IFACE
-from ..core.utils import get_device_name, set_device_name
+from ..core.utils import get_device_name
 from ..wifi_net import (
     wifi_scan, wifi_connect, wifi_status_sta,
     ip_addr4, gw4, dns_servers, dhcpcd_current_mode, apply_network,
@@ -127,16 +127,17 @@ _WIFI_HTML_TMPL = """
       <pre id="status" class="mono" style="white-space:pre-wrap;margin-top:.4rem"></pre>
     </div>
 
-    <!-- Device Name Configuration -->
+    <!-- Device Name Display -->
     <div class="card">
       <h3 style="margin-top:0">Device Configuration</h3>
       
       <div style="max-width:420px;margin:.3rem 0 .6rem 0">
-        <label>Device Name <span class="muted">(used for sensor data identification)</span></label>
-        <input id="device_name" type="text" placeholder="e.g. sensor1, sensor2" maxlength="32">
-        <div style="margin:.3rem 0">
-          <button class="btn" id="device_name_save">Save Device Name</button>
-          <span id="device_name_status" class="muted"></span>
+        <label>Device Name <span class="muted">(automatically generated from hardware)</span></label>
+        <div id="device_name_display" class="mono" style="padding:.5rem .6rem;background:var(--card);border:1px solid var(--border);border-radius:.45rem;margin:.3rem 0">
+          Loading...
+        </div>
+        <div class="muted" style="font-size:.85rem;margin:.3rem 0">
+          This name is automatically generated based on your device's hardware and cannot be changed.
         </div>
       </div>
     </div>
@@ -297,50 +298,22 @@ _WIFI_HTML_TMPL = """
     };
 
 
-    // --- Device Name functions ---
+    // --- Device Name display function ---
     async function device_name_load() {
       try {
         const url = window.getProxyAwareUrl ? window.getProxyAwareUrl('/api/device/name') : '/api/device/name';
         const r = await fetch(url, { cache: 'no-store' });
         const j = await r.json();
         if (j.ok && j.device_name) {
-          document.getElementById('device_name').value = j.device_name;
+          document.getElementById('device_name_display').textContent = j.device_name;
         }
       } catch (e) {
+        document.getElementById('device_name_display').textContent = 'Error loading name';
         console.debug('device name load:', e.message);
       }
     }
 
-    async function device_name_save() {
-      const name = document.getElementById('device_name').value.trim();
-      if (!name) {
-        document.getElementById('device_name_status').textContent = 'Device name cannot be empty';
-        return;
-      }
-      
-      document.getElementById('device_name_status').textContent = 'Saving...';
-      try {
-        const url = window.getProxyAwareUrl ? window.getProxyAwareUrl('/api/device/name') : '/api/device/name';
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_name: name })
-        });
-        const j = await r.json();
-        if (j.ok) {
-          document.getElementById('device_name_status').innerHTML = '<span style="color: var(--ok)">Saved</span>';
-          // Refresh page header to show new name
-          setTimeout(() => location.reload(), 1000);
-        } else {
-          document.getElementById('device_name_status').innerHTML = '<span style="color: var(--crit)">Error: ' + (j.error || 'save failed') + '</span>';
-        }
-      } catch (e) {
-        document.getElementById('device_name_status').innerHTML = '<span style="color: var(--crit)">Error: ' + e.message + '</span>';
-      }
-    }
-
-    // wire buttons
-    document.getElementById('device_name_save').onclick = device_name_save;
+    // wire buttons (device name no longer has save button)
 
     // initial
     refreshStatus();
@@ -426,19 +399,4 @@ def attach(bp: Blueprint) -> None:
         device_name = get_device_name()
         return jsonify({"ok": True, "device_name": device_name})
 
-    @bp.route("/api/device/name", methods=["POST"])
-    def api_device_name_set():
-        data = request.get_json(silent=True) or {}
-        device_name = (data.get("device_name") or "").strip()
-        
-        if not device_name:
-            return jsonify({"ok": False, "error": "Device name cannot be empty"}), 400
-        
-        if len(device_name) > 32:
-            return jsonify({"ok": False, "error": "Device name too long (max 32 characters)"}), 400
-        
-        success = set_device_name(device_name)
-        if success:
-            return jsonify({"ok": True})
-        else:
-            return jsonify({"ok": False, "error": "Invalid device name format (use only letters, numbers, dash, underscore)"}), 400
+    # POST endpoint removed - device names are now hardware-generated automatically
